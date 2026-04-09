@@ -40,5 +40,6 @@ router.use('/api/templates',  publicTemplateRoutes);
 router.use('/api/reviews',    publicTemplateRoutes); // reuse, separate handler
 router.use('/api/checkout',   publicCheckoutRoutes);
 router.use('/api/public',     publicInviteRoutes);
+router.use('/api/contact',   require('./contact'));
 
 module.exports = router;
