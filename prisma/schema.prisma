@@ -1,0 +1,405 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "mysql"
+  url      = env("DATABASE_URL")
+}
+
+// ─── TEMPLATES ────────────────────────────────────────────────────────────────
+
+model Template {
+  id            String   @id @default(uuid())
+  slug          String   @unique  // "floral-design-14463"
+  name          String            // "Floral Design"
+  folderPath    String            // "floral-design-14463"
+  thumbnailUrl  String?           // public URL of the cover image shown on product page
+  desktopThumbnailUrl String?     // desktop thumbnail image
+  mobileThumbnailUrl  String?     // mobile thumbnail image
+  desktopEntryFile String?        // e.g. index_desktop.html
+  mobileEntryFile  String?        // e.g. index_mobile.html
+  community     String            // hindu|muslim|sikh|christian|jain|parsi|universal
+  bestFor       String   @default("") // comma-separated event types e.g. "Wedding, Sangeet, Haldi"
+  languages     String   @default("en") // comma-separated: "en, hi, gu"
+  style         String?
+  colourPalette String?
+  animations    String?
+  price         Int               // paise — ₹1,999 = 199900
+  originalPrice Int?
+  gstPercent    Int      @default(0)
+  aboutText     String   @db.Text
+  isActive      Boolean  @default(false)
+  buyerCount    Int      @default(0)
+  avgRating     Decimal  @default(0) @db.Decimal(3, 2)
+  releasedAt    DateTime @default(now())
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  fieldSchema   Json?             // { people, customFields, mediaSlots?, functionFields } — drives the invitation form
+  demoData      TemplateDemoData?
+  events        Event[]
+  payments      Payment[]
+  reviews       TemplateReview[]
+  swapRequests  TemplateSwapRequest[]
+}
+
+model TemplateDemoData {
+  id           String   @id @default(uuid())
+  templateId   String   @unique
+  template     Template @relation(fields: [templateId], references: [id], onDelete: Cascade)
+  brideName    String
+  groomName    String
+  weddingDate  String
+  venueName    String
+  venueAddress String?
+  photoUrls    Json?
+  musicUrl     String?
+  language     String   @default("en")
+  people       Json?    // [{ role, name, photo_url }] — sample people for demo render
+  customFields Json?    // [{ key, value }] — sample custom field values for demo render
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  functions    TemplateDemoFunction[]
+}
+
+model TemplateDemoFunction {
+  id           String           @id @default(uuid())
+  demoDataId   String
+  demoData     TemplateDemoData @relation(fields: [demoDataId], references: [id], onDelete: Cascade)
+  name         String
+  date         String
+  time         String
+  venueName    String
+  venueAddress String?
+  sortOrder    Int              @default(0)
+}
+
+model TemplateReview {
+  id          String   @id @default(uuid())
+  templateId  String
+  template    Template @relation(fields: [templateId], references: [id], onDelete: Cascade)
+  userId      String
+  user        User     @relation(fields: [userId], references: [id])
+  rating      Int
+  reviewText  String?  @db.Text
+  coupleNames String?
+  location    String?
+  createdAt   DateTime @default(now())
+
+  @@unique([templateId, userId])
+}
+
+// ─── TEMPLATE SWAP ────────────────────────────────────────────────────────────
+
+// Tracks pending template swaps where balance payment is needed
+model TemplateSwapRequest {
+  id             String   @id @default(uuid())
+  userId         String
+  user           User     @relation(fields: [userId], references: [id])
+  eventId        String
+  event          Event    @relation("TemplateSwapPrimaryEvent", fields: [eventId], references: [id])
+  /// When set, payment applies the same template upgrade to this second event (paired full + partial)
+  pairedEventId  String?
+  pairedEvent    Event?   @relation("TemplateSwapPairedEvent", fields: [pairedEventId], references: [id], onDelete: SetNull)
+  fromTemplateId String
+  toTemplateId   String
+  toTemplate     Template @relation(fields: [toTemplateId], references: [id])
+  balanceAmount  Int      // paise
+  razorpayLinkId String?
+  razorpayLinkUrl String?
+  status         String   @default("pending") // pending|paid|cancelled
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+}
+
+// ─── USERS ────────────────────────────────────────────────────────────────────
+
+model User {
+  id           String   @id @default(uuid())
+  email        String   // not unique — same person may register again per purchase with a new username
+  username     String?  @unique // global login handle (only display identifier for the account)
+  passwordHash String
+  phone        String?
+  createdAt    DateTime @default(now())
+
+  events        Event[]
+  payments      Payment[]
+  reviews       TemplateReview[]
+  tickets       SupportTicket[]
+  swapRequests  TemplateSwapRequest[]
+
+  @@index([email])
+}
+
+// ─── INVITATIONS ──────────────────────────────────────────────────────────────
+
+model Event {
+  id           String    @id @default(uuid())
+  slug         String    @unique
+  subdomain    String?   @unique
+  ownerId      String
+  owner        User      @relation(fields: [ownerId], references: [id])
+  templateId   String
+  template     Template  @relation(fields: [templateId], references: [id])
+  community    String
+  eventType    String
+  brideName    String?
+  groomName    String?
+  namesAreFrozen Boolean @default(false)
+  language     String    @default("en")
+  isPublished  Boolean   @default(false)
+  expiresAt    DateTime?
+  createdAt    DateTime  @default(now())
+  /// full = all functions; subset = selected functions only — paired admin-generated invites share invitePairId
+  inviteScope  String?
+  invitePairId String?
+  lastMilestoneNotified Int?
+  countdownEmailSent Int?
+  postEventEmailSent Boolean @default(false)
+
+  /// Optional social / web links (icons live in template HTML; URLs from dashboard)
+  instagramUrl      String? @db.VarChar(2048)
+  socialYoutubeUrl  String? @db.VarChar(2048)
+  websiteUrl        String? @db.VarChar(2048)
+  rsvpEnabled       Boolean @default(true)
+  guestNotesEnabled Boolean @default(true)
+
+  functions    Function[]
+  people       EventPerson[]
+  venues       Venue[]
+  customFields EventCustomField[]
+  guests       Guest[]
+  rsvps        Rsvp[]
+  wishes       GuestWish[]
+  media        Media[]
+  payments     Payment[]
+  analytics    InvitationEvent[]
+  tickets      SupportTicket[]
+  renderCache  EventRenderCache?
+  swapRequests       TemplateSwapRequest[] @relation("TemplateSwapPrimaryEvent")
+  swapRequestsPaired TemplateSwapRequest[] @relation("TemplateSwapPairedEvent")
+
+  @@index([invitePairId])
+}
+
+// ─── EVENT PEOPLE (dynamic roles) ────────────────────────────────────────────
+
+model EventPerson {
+  id        String  @id @default(uuid())
+  eventId   String
+  event     Event   @relation(fields: [eventId], references: [id], onDelete: Cascade)
+  role      String  // bride, groom, bride_father, groom_father, bride_mother, groom_mother,
+                    // birthday_person, retiree, host, celebrant, etc.
+  name      String
+  photoUrl  String?
+  extraData Json?   // any role-specific data (e.g. bio, relationship, subtitle)
+  sortOrder Int     @default(0)
+
+  @@index([eventId])
+}
+
+// ─── VENUES ──────────────────────────────────────────────────────────────────
+
+model Venue {
+  id       String   @id @default(uuid())
+  eventId  String
+  event    Event    @relation(fields: [eventId], references: [id], onDelete: Cascade)
+  name     String
+  address  String?
+  lat      Decimal? @db.Decimal(10, 8)
+  lng      Decimal? @db.Decimal(11, 8)
+  mapUrl   String?  @db.VarChar(2048)
+  city     String?
+  state    String?
+
+  functions Function[]
+
+  @@index([eventId])
+}
+
+// ─── CUSTOM FIELDS (flexibility layer) ───────────────────────────────────────
+
+model EventCustomField {
+  id         String @id @default(uuid())
+  eventId    String
+  event      Event  @relation(fields: [eventId], references: [id], onDelete: Cascade)
+  fieldKey   String   // love_story, mehendi_artist, mehr_amount, cake_flavor, hashtag, etc.
+  fieldValue String   @db.Text
+  fieldType  String   @default("text") // text, number, json, date, html
+
+  @@unique([eventId, fieldKey])
+  @@index([eventId])
+}
+
+// ─── RENDER CACHE ────────────────────────────────────────────────────────────
+
+model EventRenderCache {
+  id          String   @id @default(uuid())
+  eventId     String   @unique
+  event       Event    @relation(fields: [eventId], references: [id], onDelete: Cascade)
+  htmlDesktop String   @db.LongText
+  htmlMobile  String   @db.LongText
+  dataJson    Json
+  builtAt     DateTime @default(now())
+}
+
+model Function {
+  id           String   @id @default(uuid())
+  eventId      String
+  event        Event    @relation(fields: [eventId], references: [id], onDelete: Cascade)
+  name         String
+  date         DateTime @db.Date
+  startTime    String?
+  endTime      String?
+  venueId      String?
+  venue        Venue?   @relation(fields: [venueId], references: [id], onDelete: SetNull)
+  venueName    String?
+  venueAddress String?
+  venueLat     Decimal? @db.Decimal(10, 8)
+  venueLng     Decimal? @db.Decimal(11, 8)
+  /// Share link (e.g. maps.app.goo.gl or google.com/maps/place/…); lat/lng optional when set
+  venueMapUrl  String?  @db.VarChar(2048)
+  dressCode    String?
+  notes        String?  @db.Text
+  sortOrder    Int      @default(0)
+
+  rsvps        Rsvp[]
+}
+
+// ─── GUESTS & RSVPs ───────────────────────────────────────────────────────────
+
+model Guest {
+  id          String   @id @default(uuid())
+  eventId     String
+  event       Event    @relation(fields: [eventId], references: [id], onDelete: Cascade)
+  name        String
+  phone       String?
+  email       String?
+  side        String?
+  tags        String?
+  inviteToken String   @unique @default(uuid())
+  createdAt   DateTime @default(now())
+
+  rsvps       Rsvp[]
+  analytics   InvitationEvent[]
+}
+
+model Rsvp {
+  id             String   @id @default(uuid())
+  guestId        String
+  guest          Guest    @relation(fields: [guestId], references: [id], onDelete: Cascade)
+  functionId     String
+  function       Function @relation(fields: [functionId], references: [id], onDelete: Cascade)
+  eventId        String
+  event          Event    @relation(fields: [eventId], references: [id], onDelete: Cascade)
+  attending      Boolean?
+  plusCount      Int      @default(0)
+  mealPreference String?
+  message        String?  @db.Text
+  submittedAt    DateTime @default(now())
+
+  @@unique([guestId, functionId])
+}
+
+model GuestWish {
+  id         String   @id @default(uuid())
+  eventId    String
+  event      Event    @relation(fields: [eventId], references: [id], onDelete: Cascade)
+  guestName  String
+  message    String   @db.Text
+  isApproved Boolean  @default(true)
+  createdAt  DateTime @default(now())
+
+  @@index([eventId])
+}
+
+// ─── ANALYTICS ────────────────────────────────────────────────────────────────
+
+model InvitationEvent {
+  id        String   @id @default(uuid())
+  eventId   String
+  event     Event    @relation(fields: [eventId], references: [id])
+  guestId   String?
+  guest     Guest?   @relation(fields: [guestId], references: [id])
+  type      String   // opened|rsvp_started|rsvp_submitted|music_played|map_clicked
+  metadata  Json?
+  createdAt DateTime @default(now())
+}
+
+// ─── MEDIA ────────────────────────────────────────────────────────────────────
+
+model Media {
+  id        String   @id @default(uuid())
+  eventId   String
+  event     Event    @relation(fields: [eventId], references: [id], onDelete: Cascade)
+  type      String   // photo|music|background|video
+  url       String
+  caption   String?
+  slotKey   String?  // maps to fieldSchema.mediaSlots[].key (ganesh, couple_carousel, …)
+  sortOrder Int      @default(0)
+  createdAt DateTime @default(now())
+}
+
+// ─── PAYMENTS ─────────────────────────────────────────────────────────────────
+
+model Payment {
+  id                String   @id @default(uuid())
+  userId            String?
+  user              User?    @relation(fields: [userId], references: [id])
+  eventId           String?
+  event             Event?   @relation(fields: [eventId], references: [id])
+  templateId        String
+  template          Template @relation(fields: [templateId], references: [id])
+  razorpayOrderId   String?
+  razorpayPaymentId String?
+  customerEmail     String?
+  couponCode        String?
+  discountAmount    Int?     @default(0)
+  amount            Int      // paise
+  currency          String   @default("INR")
+  status            String   @default("pending") // pending|paid|failed|refunded
+  isOnboarded       Boolean  @default(false)
+  onboardedAt       DateTime?
+  reminderSentAt    DateTime?
+  createdAt         DateTime @default(now())
+}
+
+model CouponCode {
+  id              String   @id @default(uuid())
+  code            String   @unique
+  discountPercent Int
+  expiresAt       DateTime?
+  maxGlobalUses   Int?
+  maxUsesPerUser  Int?
+  minOrderAmount  Int?     @default(0) // paise
+  isActive        Boolean  @default(true)
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+}
+
+// ─── SUPPORT TICKETS ──────────────────────────────────────────────────────────
+
+model SupportTicket {
+  id        String          @id @default(uuid())
+  userId    String
+  user      User            @relation(fields: [userId], references: [id])
+  eventId   String?
+  event     Event?          @relation(fields: [eventId], references: [id])
+  subject   String
+  status    String          @default("open") // open|resolved
+  createdAt DateTime        @default(now())
+  updatedAt DateTime        @updatedAt
+
+  messages  TicketMessage[]
+}
+
+model TicketMessage {
+  id         String        @id @default(uuid())
+  ticketId   String
+  ticket     SupportTicket @relation(fields: [ticketId], references: [id], onDelete: Cascade)
+  senderRole String        // user|admin
+  body       String        @db.Text
+  createdAt  DateTime      @default(now())
+}
