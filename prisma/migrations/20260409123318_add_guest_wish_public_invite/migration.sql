@@ -1,11 +1,11 @@
 -- AlterTable
-ALTER TABLE `function` ADD COLUMN `venueId` VARCHAR(191) NULL;
+ALTER TABLE `Function` ADD COLUMN `venueId` VARCHAR(191) NULL;
 
 -- AlterTable
-ALTER TABLE `template` ADD COLUMN `fieldSchema` JSON NULL;
+ALTER TABLE `Template` ADD COLUMN `fieldSchema` JSON NULL;
 
 -- AlterTable
-ALTER TABLE `templatedemodata` ADD COLUMN `customFields` JSON NULL,
+ALTER TABLE `TemplateDemoData` ADD COLUMN `customFields` JSON NULL,
     ADD COLUMN `people` JSON NULL;
 
 -- CreateTable

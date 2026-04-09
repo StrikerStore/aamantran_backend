@@ -5,6 +5,6 @@
 
 */
 -- AlterTable
-ALTER TABLE `template` DROP COLUMN `theme`,
+ALTER TABLE `Template` DROP COLUMN `theme`,
     ADD COLUMN `languages` VARCHAR(191) NOT NULL DEFAULT 'en',
     ADD COLUMN `thumbnailUrl` VARCHAR(191) NULL;

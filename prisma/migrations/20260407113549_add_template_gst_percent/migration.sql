@@ -1,2 +1,2 @@
 -- AlterTable
-ALTER TABLE `template` ADD COLUMN `gstPercent` INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE `Template` ADD COLUMN `gstPercent` INTEGER NOT NULL DEFAULT 0;
