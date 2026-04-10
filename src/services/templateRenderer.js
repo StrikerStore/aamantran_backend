@@ -294,6 +294,44 @@ function buildInvitationData(event) {
   };
 }
 
+function inferMediaType(url) {
+  const s = String(url);
+  if (/\.(mp3|wav|ogg|aac|m4a|flac)$/i.test(s)) return 'music';
+  if (/\.(mp4|webm|mov)$/i.test(s)) return 'video';
+  return 'photo';
+}
+
+/**
+ * Convert demo media map → { slotKey: [{ url, caption, type }] }
+ * Supports both old format { key: "url" } and new format { key: ["url1", "url2"] }.
+ */
+function buildDemoMediaSlots(demoUrls) {
+  if (!demoUrls || typeof demoUrls !== 'object') return {};
+  const slots = {};
+  for (const [key, val] of Object.entries(demoUrls)) {
+    if (!val) continue;
+    const urls = Array.isArray(val) ? val : [val];
+    slots[key] = urls.filter(Boolean).map(u => ({
+      url: String(u), caption: '', type: inferMediaType(u),
+    }));
+  }
+  return slots;
+}
+
+/** Flat vars: { media_ganesh_url: "https://..." } for direct {{media_ganesh_url}} usage (first URL per slot). */
+function buildDemoMediaSlotFlat(demoUrls) {
+  if (!demoUrls || typeof demoUrls !== 'object') return {};
+  const flat = {};
+  for (const [key, val] of Object.entries(demoUrls)) {
+    if (!val) continue;
+    const first = Array.isArray(val) ? val[0] : val;
+    if (!first) continue;
+    const safe = String(key).replace(/[^a-zA-Z0-9_]/g, '_');
+    flat[`media_${safe}_url`] = String(first);
+  }
+  return flat;
+}
+
 /**
  * Build the data object for a template's live demo.
  * Now supports people and customFields from demo data.
@@ -357,10 +395,15 @@ function buildDemoData(demoData) {
     music_url: demoData.musicUrl || '',
     ganesh_image_url: custom.ganesh_image_url || (demoData.photoUrls || [])[0] || '',
 
+    // Media slots from demo URLs — builds same structure as live invitations
+    media_slots: buildDemoMediaSlots(demoData.mediaSlotDemoUrls),
+
     // Spread flat people vars
     ...peopleFlatVars,
     // Spread custom fields
     ...custom,
+    // Spread flat media slot vars (e.g. {{media_ganesh_url}})
+    ...buildDemoMediaSlotFlat(demoData.mediaSlotDemoUrls),
   };
 }
 

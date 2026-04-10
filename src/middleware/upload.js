@@ -13,10 +13,21 @@ const storage = multer.diskStorage({
   },
 });
 
+// Template ZIP + static assets + demo / thumbnail media (keep in sync with uploadUserMedia where sensible)
+const ALLOWED = new Set([
+  '.zip', '.html', '.css', '.js', '.json',
+  '.jpg', '.jpeg', '.png', '.gif', '.svg', '.webp', '.avif', '.bmp', '.ico',
+  '.mp3', '.wav', '.ogg', '.m4a', '.aac', '.flac',
+  '.mp4', '.webm', '.mov',
+  '.woff', '.woff2', '.ttf',
+]);
+
 const fileFilter = (_req, file, cb) => {
-  const allowed = ['.zip', '.html', '.css', '.js', '.jpg', '.jpeg', '.png', '.gif', '.svg', '.webp', '.mp3', '.woff', '.woff2', '.ttf'];
-  const ext = path.extname(file.originalname).toLowerCase();
-  allowed.includes(ext) ? cb(null, true) : cb(new Error(`File type ${ext} not allowed`));
+  const ext = path.extname(file.originalname || '').toLowerCase();
+  if (ALLOWED.has(ext)) return cb(null, true);
+  const err = new Error(`File type ${ext || '(none)'} not allowed`);
+  err.status = 400;
+  cb(err);
 };
 
 const upload = multer({

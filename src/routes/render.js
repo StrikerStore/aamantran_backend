@@ -40,7 +40,39 @@ function injectDemoBuyBar(html, templateSlug) {
   .aamantran-demo-buy-wrap .aamantran-btn-buy:hover{
     background:rgba(110,31,46,0.88);filter:brightness(1.03);
   }
+  .aamantran-demo-watermark{
+    position:fixed;top:0;left:0;width:100%;height:100%;z-index:2147483645;
+    pointer-events:none;overflow:hidden;
+  }
+  .aamantran-demo-watermark span{
+    position:absolute;
+    font-family:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;
+    font-size:18px;font-weight:700;letter-spacing:3px;
+    color:rgba(0,0,0,0.06);
+    white-space:nowrap;
+    transform:rotate(-30deg);
+    user-select:none;
+    -webkit-user-select:none;
+  }
 </style>
+<div class="aamantran-demo-watermark" aria-hidden="true"></div>
+<script>
+(function(){
+  var w=document.querySelector('.aamantran-demo-watermark');
+  if(!w)return;
+  var cols=Math.ceil(window.innerWidth/280);
+  var rows=Math.ceil(window.innerHeight/180);
+  for(var r=0;r<rows+2;r++){
+    for(var c=0;c<cols+2;c++){
+      var s=document.createElement('span');
+      s.textContent='Aamantran';
+      s.style.left=(c*280-60)+'px';
+      s.style.top=(r*180-40)+'px';
+      w.appendChild(s);
+    }
+  }
+})();
+</script>
 <div class="aamantran-demo-buy-wrap" role="navigation" aria-label="Purchase">
   <a class="aamantran-btn-buy" href="${checkoutUrl}">Buy now</a>
 </div>`;

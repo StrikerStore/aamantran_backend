@@ -28,6 +28,8 @@ router.put  ('/:id/files',  upload.fields([
   { name: 'mobileThumbnailImage', maxCount: 1 },
 ]), controller.updateFiles);
 router.put  ('/:id/demo-data', controller.updateDemoData);
+router.post ('/:id/demo-media', upload.single('file'), controller.uploadDemoMedia);
+router.delete('/:id/demo-media/:slotKey', controller.deleteDemoMedia);
 router.patch('/:id/publish', controller.publish);
 router.patch('/:id/draft',   controller.draft);
 router.delete('/:id',        controller.remove);

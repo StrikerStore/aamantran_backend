@@ -35,7 +35,14 @@ app.use(
         fontSrc:    ["'self'", "https://fonts.gstatic.com", "data:"],
         connectSrc: ["'self'", "https:"],
         mediaSrc:   ["'self'", "https:", "blob:"],
-        frameSrc:   ["'self'", "https://api.razorpay.com"],
+        // Razorpay checkout + YouTube/Vimeo embeds from demo/custom field URLs in templates
+        frameSrc: [
+          "'self'",
+          'https://api.razorpay.com',
+          'https://www.youtube.com',
+          'https://www.youtube-nocookie.com',
+          'https://player.vimeo.com',
+        ],
       },
     },
     crossOriginResourcePolicy: { policy: 'cross-origin' },
