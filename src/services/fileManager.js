@@ -211,24 +211,29 @@ async function walkAndRewrite(baseDir, currentDir, prefix) {
     }
 
     const ext = path.extname(entry.name).toLowerCase();
-    // Skip .js files — Vite-bundled JS only uses ES module imports with "./"
-    // relative paths. The regex below is HTML/CSS-oriented and can corrupt
-    // minified JS by matching code tokens (e.g. `e.jsx`) as file extensions.
-    // Instead, JS files get their asset paths rewritten via the import match
-    // below which is safe because it strictly requires a leading "./" or "../".
-    if (!['.html', '.css'].includes(ext)) continue;
+    if (!['.html', '.css', '.js'].includes(ext)) continue;
 
     let content = await fsp.readFile(fullPath, 'utf8');
 
-    // IMPORTANT: only match paths that explicitly start with ./ or ../
-    // The original regex used a zero-width negative lookahead as an alternative
-    // to "./", which caused it to match arbitrary JS code containing ".js"
-    // substrings (e.g. `e.jsx` matched as a ".js" extension), corrupting
-    // minified bundle files.
-    content = content.replace(
-      /(['"`])(\.\.\/|\.\/)([^'"`\s>]+\.(jpg|jpeg|png|gif|avif|webp|svg|mp4|webm|mp3|ogg|css|js|woff2?|ttf))/gi,
-      (_m, quote, _rel, rest) => `${quote}${prefix}${rest}`
-    );
+    if (ext === '.js') {
+      // ── JS: rewrite ONLY ES module import/export paths ──
+      // Anchors on the `from` keyword or `import(` syntax so it can never
+      // match arbitrary minified code like getElementById("root") or e.jsx().
+      content = content.replace(
+        /(from\s*["'])(\.\.\/|\.\/)([^"'\s]+)(["'])/gi,
+        (_m, pre, _rel, rest, post) => `${pre}${prefix}${rest}${post}`
+      );
+      content = content.replace(
+        /(import\s*\(\s*["'])(\.\.\/|\.\/)([^"'\s]+)(["']\s*\))/gi,
+        (_m, pre, _rel, rest, post) => `${pre}${prefix}${rest}${post}`
+      );
+    } else {
+      // ── HTML / CSS: rewrite asset references starting with ./ or ../ ──
+      content = content.replace(
+        /(['"`])(\.\.\/|\.\/)([^'"`\s>]+\.(jpg|jpeg|png|gif|avif|webp|svg|mp4|webm|mp3|ogg|css|js|woff2?|ttf))/gi,
+        (_m, quote, _rel, rest) => `${quote}${prefix}${rest}`
+      );
+    }
 
     await fsp.writeFile(fullPath, content, 'utf8');
   }
