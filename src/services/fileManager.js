@@ -10,35 +10,19 @@ const objectStorage = require('./objectStorage');
 // ── R2 URL rewriter ───────────────────────────────────────────────────────────
 
 /**
- * Cache-bust version appended to r2-proxy asset URLs.
- * Bump this number whenever corrupted or stale assets have been cached by
- * browsers with immutable Cache-Control headers and need to be invalidated.
- */
-const R2_PROXY_CACHE_VERSION = 2;
-
-/**
- * Replace direct R2 public base URLs in template HTML with the API-side proxy
- * path so the browser never makes a cross-origin request for template assets.
- * Appends ?v=N to force browsers to bypass stale cached assets.
+ * Previously this replaced R2 public CDN URLs (media.aamantran.online) with
+ * API-side proxy URLs (api.aamantran.online/r2-proxy/) to avoid CORS issues.
  *
- * e.g.  https://media.aamantran.online/templates/slug/assets/foo.js
- *    →  https://api.aamantran.online/r2-proxy/templates/slug/assets/foo.js?v=2
+ * Now that CORS is properly configured on the R2 bucket (ensureBucketCors)
+ * and JS module imports use absolute CDN URLs, assets can load directly from
+ * the CDN without proxying. This avoids Cloudflare CDN cache staleness on
+ * the API domain which previously served corrupted files indefinitely.
+ *
+ * The HTML is returned unchanged — asset URLs stay as
+ * https://media.aamantran.online/templates/slug/assets/foo.js
  */
 function rewriteR2AssetsToProxy(html) {
-  if (!storage.useObjectStorage()) return html;
-  const r2Base  = storage.objectStoragePublicBase(); // e.g. https://media.aamantran.online
-  const siteUrls = require('../config/siteUrls');
-  const apiBase = siteUrls.apiBaseUrl();             // e.g. https://api.aamantran.online
-  const proxyBase = `${apiBase}/r2-proxy`;
-
-  // Replace all R2 base URLs with proxy URLs, then append cache-bust version
-  // to asset references (JS, CSS, fonts, images) in src/href attributes.
-  let result = html.split(r2Base).join(proxyBase);
-  result = result.replace(
-    /((?:src|href)\s*=\s*["'])([^"']*\/r2-proxy\/[^"']+\.(js|css|woff2?|ttf))(["'])/gi,
-    (_m, pre, url, _ext, post) => `${pre}${url}?v=${R2_PROXY_CACHE_VERSION}${post}`
-  );
-  return result;
+  return html;
 }
 
 const STORAGE_PATH = path.resolve(process.env.STORAGE_PATH || './storage');
