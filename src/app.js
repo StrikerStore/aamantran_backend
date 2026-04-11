@@ -24,13 +24,32 @@ if (process.env.TRUST_PROXY === '0') {
   app.set('trust proxy', 1);
 }
 
+// ── CSP: build allowed-origins list from env ──────────────────────────────
+const r2PublicBase = process.env.R2_PUBLIC_BASE_URL
+  ? new URL(process.env.R2_PUBLIC_BASE_URL).origin   // e.g. https://media.aamantran.online
+  : null;
+
 app.use(
   helmet({
     contentSecurityPolicy: {
       directives: {
         defaultSrc: ["'self'"],
-        scriptSrc:  ["'self'", "'unsafe-inline'", "'unsafe-eval'"],
-        styleSrc:   ["'self'", "'unsafe-inline'", "https://fonts.googleapis.com"],
+        scriptSrc: [
+          "'self'",
+          "'unsafe-inline'",
+          "'unsafe-eval'",
+          // Template JS bundles served from R2 / media CDN
+          ...(r2PublicBase ? [r2PublicBase] : []),
+          // Cloudflare Web Analytics beacon (injected by Cloudflare Pages/Workers)
+          'https://static.cloudflareinsights.com',
+        ],
+        styleSrc: [
+          "'self'",
+          "'unsafe-inline'",
+          'https://fonts.googleapis.com',
+          // Template CSS bundles served from R2 / media CDN
+          ...(r2PublicBase ? [r2PublicBase] : []),
+        ],
         imgSrc:     ["'self'", "data:", "blob:", "https:"],
         fontSrc:    ["'self'", "https://fonts.gstatic.com", "data:"],
         connectSrc: ["'self'", "https:"],
