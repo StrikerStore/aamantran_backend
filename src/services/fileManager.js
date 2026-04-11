@@ -10,19 +10,39 @@ const objectStorage = require('./objectStorage');
 // ── R2 URL rewriter ───────────────────────────────────────────────────────────
 
 /**
- * Previously this replaced R2 public CDN URLs (media.aamantran.online) with
- * API-side proxy URLs (api.aamantran.online/r2-proxy/) to avoid CORS issues.
+ * Cache-bust version appended to r2-proxy asset URLs.
+ * Bump this when stale/corrupted assets are cached on the CDN with immutable headers.
+ */
+const R2_PROXY_CACHE_VERSION = 3;
+
+/**
+ * Replace direct R2 public CDN URLs in template HTML with same-origin
+ * API-side proxy paths.  This is necessary because:
+ *  1. CSS `<link crossorigin>` tags need CORS headers that R2's Cloudflare
+ *     CDN does not reliably return.
+ *  2. Root-relative image paths in the JS bundle (e.g. `/images/foo.jpg`)
+ *     must resolve against the proxy origin so `/r2-proxy/` middleware can
+ *     intercept them.
  *
- * Now that CORS is properly configured on the R2 bucket (ensureBucketCors)
- * and JS module imports use absolute CDN URLs, assets can load directly from
- * the CDN without proxying. This avoids Cloudflare CDN cache staleness on
- * the API domain which previously served corrupted files indefinitely.
- *
- * The HTML is returned unchanged — asset URLs stay as
- * https://media.aamantran.online/templates/slug/assets/foo.js
+ * Appends ?v=N to JS/CSS URLs to force browser cache invalidation after
+ * a corrupted-asset fix.
  */
 function rewriteR2AssetsToProxy(html) {
-  return html;
+  if (!storage.useObjectStorage()) return html;
+  const r2Base   = storage.objectStoragePublicBase(); // e.g. https://media.aamantran.online
+  const siteUrls = require('../config/siteUrls');
+  const apiBase  = siteUrls.apiBaseUrl();             // e.g. https://api.aamantran.online
+  const proxyBase = `${apiBase}/r2-proxy`;
+
+  // 1. Replace all CDN base URLs with proxy base URLs
+  let result = html.split(r2Base).join(proxyBase);
+
+  // 2. Append cache-bust version to JS/CSS asset URLs in src/href attributes
+  result = result.replace(
+    /((?:src|href)\s*=\s*["'])([^"']*\/r2-proxy\/[^"']+\.(js|css|woff2?|ttf))(["'])/gi,
+    (_m, pre, url, _ext, post) => `${pre}${url}?v=${R2_PROXY_CACHE_VERSION}${post}`
+  );
+  return result;
 }
 
 const STORAGE_PATH = path.resolve(process.env.STORAGE_PATH || './storage');
@@ -200,7 +220,7 @@ async function walkAndRewrite(baseDir, currentDir, prefix) {
     let content = await fsp.readFile(fullPath, 'utf8');
 
     if (ext === '.js') {
-      // ── JS: rewrite ONLY ES module import/export paths ──
+      // ── JS: rewrite ES module import/export paths ──
       // Anchors on the `from` keyword or `import(` syntax so it can never
       // match arbitrary minified code like getElementById("root") or e.jsx().
       content = content.replace(
@@ -211,12 +231,30 @@ async function walkAndRewrite(baseDir, currentDir, prefix) {
         /(import\s*\(\s*["'])(\.\.\/|\.\/)([^"'\s]+)(["']\s*\))/gi,
         (_m, pre, _rel, rest, post) => `${pre}${prefix}${rest}${post}`
       );
+
+      // ── JS: rewrite root-relative asset paths (/images/foo.jpg, etc.) ──
+      // Vite compiles hardcoded image imports as root-relative strings.
+      // When the page is served from api.aamantran.online, these resolve to
+      // the wrong origin. Rewrite to absolute CDN URLs.
+      // prefix is e.g. "https://media.aamantran.online/templates/slug/"
+      // so "/images/foo.jpg" becomes "https://media.aamantran.online/templates/slug/images/foo.jpg"
+      content = content.replace(
+        /(["'])\/(images|fonts|assets)\//g,
+        (_m, quote, dir) => `${quote}${prefix}${dir}/`
+      );
     } else {
       // ── HTML / CSS: rewrite asset references starting with ./ or ../ ──
       content = content.replace(
         /(['"`])(\.\.\/|\.\/)([^'"`\s>]+\.(jpg|jpeg|png|gif|avif|webp|svg|mp4|webm|mp3|ogg|css|js|woff2?|ttf))/gi,
         (_m, quote, _rel, rest) => `${quote}${prefix}${rest}`
       );
+      // CSS url() with unquoted paths: url(../images/foo.jpg)
+      if (ext === '.css') {
+        content = content.replace(
+          /url\((\.\.\/|\.\/)([^)]+\.(jpg|jpeg|png|gif|avif|webp|svg|woff2?|ttf))\)/gi,
+          (_m, _rel, rest) => `url(${prefix}${rest})`
+        );
+      }
     }
 
     await fsp.writeFile(fullPath, content, 'utf8');
