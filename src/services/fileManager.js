@@ -193,12 +193,22 @@ async function walkAndRewrite(baseDir, currentDir, prefix) {
     }
 
     const ext = path.extname(entry.name).toLowerCase();
-    if (!['.html', '.css', '.js'].includes(ext)) continue;
+    // Skip .js files — Vite-bundled JS only uses ES module imports with "./"
+    // relative paths. The regex below is HTML/CSS-oriented and can corrupt
+    // minified JS by matching code tokens (e.g. `e.jsx`) as file extensions.
+    // Instead, JS files get their asset paths rewritten via the import match
+    // below which is safe because it strictly requires a leading "./" or "../".
+    if (!['.html', '.css'].includes(ext)) continue;
 
     let content = await fsp.readFile(fullPath, 'utf8');
 
+    // IMPORTANT: only match paths that explicitly start with ./ or ../
+    // The original regex used a zero-width negative lookahead as an alternative
+    // to "./", which caused it to match arbitrary JS code containing ".js"
+    // substrings (e.g. `e.jsx` matched as a ".js" extension), corrupting
+    // minified bundle files.
     content = content.replace(
-      /(['"`])(\.\/|(?!https?:\/\/|\/|data:))([^'"`\s>]+\.(jpg|jpeg|png|gif|avif|webp|svg|mp4|webm|mp3|ogg|css|js|woff2?|ttf))/gi,
+      /(['"`])(\.\.\/|\.\/)([^'"`\s>]+\.(jpg|jpeg|png|gif|avif|webp|svg|mp4|webm|mp3|ogg|css|js|woff2?|ttf))/gi,
       (_m, quote, _rel, rest) => `${quote}${prefix}${rest}`
     );
 
