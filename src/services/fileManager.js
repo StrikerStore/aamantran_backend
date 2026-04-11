@@ -7,6 +7,22 @@ const unzipper = require('unzipper');
 const storage = require('../config/storage');
 const objectStorage = require('./objectStorage');
 
+// ── R2 URL rewriter ───────────────────────────────────────────────────────────
+/**
+ * Replace direct R2 public base URLs in template HTML with the API-side proxy
+ * path so the browser never makes a cross-origin request for template assets.
+ *
+ * e.g.  https://media.aamantran.online/templates/slug/assets/foo.js
+ *    →  https://api.aamantran.online/r2-proxy/templates/slug/assets/foo.js
+ */
+function rewriteR2AssetsToProxy(html) {
+  if (!storage.useObjectStorage()) return html;
+  const r2Base  = storage.objectStoragePublicBase(); // e.g. https://media.aamantran.online
+  const siteUrls = require('../config/siteUrls');
+  const apiBase = siteUrls.apiBaseUrl();             // e.g. https://api.aamantran.online
+  return html.split(r2Base).join(`${apiBase}/r2-proxy`);
+}
+
 const STORAGE_PATH = path.resolve(process.env.STORAGE_PATH || './storage');
 const TEMPLATES_DIR = path.join(STORAGE_PATH, 'templates');
 
@@ -218,7 +234,8 @@ async function readTemplateHtml(folderName, options = {}) {
       const key = `templates/${folderName}/${fileName}`;
       try {
         const buf = await objectStorage.getObjectBuffer(key);
-        return buf.toString('utf8');
+        // Rewrite direct R2 URLs → /r2-proxy/* so assets load same-origin
+        return rewriteR2AssetsToProxy(buf.toString('utf8'));
       } catch (err) {
         const code = err?.name || err?.Code || err?.code;
         const status = err?.$metadata?.httpStatusCode;

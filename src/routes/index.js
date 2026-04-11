@@ -17,8 +17,13 @@ const userEventRoutes   = require('./userEvents');
 const userTicketRoutes  = require('./userTickets');
 const userProfileRoutes = require('./userProfile');
 
+// ── R2 asset proxy (no auth) — must be first so CSP/CORS never applies ──────
+const r2ProxyRoutes = require('./r2Proxy');
+router.use('/r2-proxy', r2ProxyRoutes);
+
 // ── Public — invitation rendering ────────────────────────────────────
 router.use('/', renderRoutes);
+
 
 // ── Admin API (JWT-protected inside each router) ─────────────────────
 router.use('/api/v1/auth',         authRoutes);
