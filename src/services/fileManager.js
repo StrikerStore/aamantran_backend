@@ -79,10 +79,12 @@ async function uploadDirectoryToR2(localDir, keyPrefix) {
  * Returns path `/s/...` (local) or full https URL (R2).
  */
 async function saveThumbnail(filePath, folderName, originalName, variant = 'desktop') {
+  const { v4: uuidv4 } = require('uuid');
   const ext = path.extname(originalName).toLowerCase() || '.jpg';
   const safeVariant = variant === 'mobile' ? 'mobile' : 'desktop';
-  const fileName = `${safeVariant}-thumbnail${ext}`;
-  const relKey = `templates/${folderName}/${fileName}`;
+  const uniqueId = uuidv4().replace(/-/g, '').slice(0, 10);
+  const fileName = `${safeVariant}-thumbnail-${uniqueId}${ext}`;
+  const relKey = `templates/${folderName}/thumbnails/${fileName}`;
 
   if (storage.useObjectStorage()) {
     const buf = await fsp.readFile(filePath);
@@ -92,13 +94,13 @@ async function saveThumbnail(filePath, folderName, originalName, variant = 'desk
     return `${storage.objectStoragePublicBase()}/${relKey}`;
   }
 
-  const dest = path.join(TEMPLATES_DIR, folderName);
+  const dest = path.join(TEMPLATES_DIR, folderName, 'thumbnails');
   if (!fs.existsSync(dest)) fs.mkdirSync(dest, { recursive: true });
   const thumbPath = path.join(dest, fileName);
   await fsp.copyFile(filePath, thumbPath);
   await fsp.unlink(filePath).catch(() => {});
 
-  return `/s/${folderName}/${fileName}`;
+  return `/s/${folderName}/thumbnails/${fileName}`;
 }
 
 /**

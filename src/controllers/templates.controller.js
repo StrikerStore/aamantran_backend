@@ -295,6 +295,29 @@ async function updateDemoData(req, res) {
   res.json({ ok: true, data: updated });
 }
 
+// DELETE /api/v1/templates/:id/thumbnail/:variant  (desktop | mobile)
+async function deleteThumbnail(req, res) {
+  const { variant } = req.params;
+  const safeVariant = variant === 'mobile' ? 'mobile' : 'desktop';
+
+  const template = await prisma.template.findUniqueOrThrow({ where: { id: req.params.id } });
+
+  const urlToDelete = safeVariant === 'mobile'
+    ? template.mobileThumbnailUrl
+    : (template.desktopThumbnailUrl || template.thumbnailUrl);
+
+  if (urlToDelete) {
+    await objectStorage.tryDeletePublicUrl(urlToDelete).catch(() => {});
+  }
+
+  const updateData = safeVariant === 'mobile'
+    ? { mobileThumbnailUrl: null }
+    : { desktopThumbnailUrl: null, thumbnailUrl: null };
+
+  await prisma.template.update({ where: { id: template.id }, data: updateData });
+  res.json({ ok: true });
+}
+
 // PATCH /api/v1/templates/:id/publish
 async function publish(req, res) {
   const template = await prisma.template.update({
@@ -471,4 +494,4 @@ async function deleteDemoMedia(req, res) {
   res.json({ ok: true, mediaSlotDemoUrls: updated });
 }
 
-module.exports = { list, get, create, update, updateFiles, updateDemoData, uploadDemoMedia, deleteDemoMedia, publish, draft, remove };
+module.exports = { list, get, create, update, updateFiles, updateDemoData, uploadDemoMedia, deleteDemoMedia, deleteThumbnail, publish, draft, remove };
