@@ -48,7 +48,7 @@ function injectDemoBuyBar(html, templateSlug) {
     position:absolute;
     font-family:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;
     font-size:18px;font-weight:700;letter-spacing:3px;
-    color:rgba(0,0,0,0.06);
+    color:rgba(0,0,0,0.18);
     white-space:nowrap;
     transform:rotate(-30deg);
     user-select:none;
