@@ -60,14 +60,15 @@ function injectDemoBuyBar(html, templateSlug) {
 (function(){
   var w=document.querySelector('.aamantran-demo-watermark');
   if(!w)return;
-  var cols=Math.ceil(window.innerWidth/280);
-  var rows=Math.ceil(window.innerHeight/180);
-  for(var r=0;r<rows+2;r++){
-    for(var c=0;c<cols+2;c++){
+  var W=window.innerWidth;var H=window.innerHeight;
+  var cols=Math.ceil(W/280)+6;
+  var rows=Math.ceil((H+W*0.7)/180)+4;
+  for(var r=0;r<rows;r++){
+    for(var c=0;c<cols;c++){
       var s=document.createElement('span');
       s.textContent='Aamantran';
-      s.style.left=(c*280-60)+'px';
-      s.style.top=(r*180-40)+'px';
+      s.style.left=(c*280-120)+'px';
+      s.style.top=(r*180-120)+'px';
       w.appendChild(s);
     }
   }
