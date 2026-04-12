@@ -168,6 +168,8 @@ router.get('/i/:slug', async (req, res) => {
     name: fn.name,
     date: fn.date,
   }));
+  // Build photos list for window.__AAMANTRAN__.photos from all photo-type media
+  const sdkPhotos = (data.photos || []);
   const html = await renderTemplate(event.template.folderPath, data, {
     variant,
     preferredFile: variant === 'mobile' ? event.template.mobileEntryFile : event.template.desktopEntryFile,
@@ -177,6 +179,7 @@ router.get('/i/:slug', async (req, res) => {
       eventSlug: event.slug,
       apiBase,
       functions: sdkFunctions,
+      photos: sdkPhotos,
       rsvpEnabled: event.rsvpEnabled !== false,
       guestNotesEnabled: event.guestNotesEnabled !== false,
     },

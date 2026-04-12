@@ -391,7 +391,16 @@ function buildDemoData(demoData) {
         dress_code:    '',
         notes:         '',
       })),
-    photos:    (demoData.photoUrls || []).map(url => ({ url, caption: '' })),
+    photos:    (() => {
+      // Primary: explicit photoUrls array (legacy field)
+      const fromPhotoUrls = (demoData.photoUrls || []).filter(Boolean).map(url => ({ url, caption: '' }));
+      if (fromPhotoUrls.length) return fromPhotoUrls;
+      // Fallback: pull from the 'photos' or 'gallery' media slot (uploaded via R2 media-slot system)
+      const mediaSlots  = demoData.mediaSlotDemoUrls || {};
+      const slotPhotos  = (mediaSlots.photos || mediaSlots.gallery || []);
+      const slotUrls    = Array.isArray(slotPhotos) ? slotPhotos : (slotPhotos ? [slotPhotos] : []);
+      return slotUrls.filter(Boolean).map(u => ({ url: String(u), caption: '' }));
+    })(),
     music_url: demoData.musicUrl || '',
     ganesh_image_url: custom.ganesh_image_url || (demoData.photoUrls || [])[0] || '',
 

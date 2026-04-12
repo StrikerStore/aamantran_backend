@@ -74,6 +74,8 @@ model TemplateDemoFunction {
   time         String
   venueName    String
   venueAddress String?
+  venueMapUrl  String?  @db.VarChar(2048)
+  dressCode    String?
   sortOrder    Int              @default(0)
 }
 

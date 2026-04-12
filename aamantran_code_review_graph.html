@@ -1,0 +1,210 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Code Review Graph — aamantran_website</title>
+<style>
+  :root {
+    --font-sans: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+    --font-mono: 'SF Mono', 'Fira Code', monospace;
+    --color-background-primary: #ffffff;
+    --color-background-secondary: #f5f5f3;
+    --color-text-primary: #1a1a18;
+    --color-text-secondary: #6b6a64;
+    --color-text-tertiary: #9c9a92;
+    --color-text-info: #185FA5;
+    --color-background-info: #E6F1FB;
+    --color-border-tertiary: rgba(0,0,0,0.12);
+    --color-border-secondary: rgba(0,0,0,0.2);
+    --color-border-primary: rgba(0,0,0,0.3);
+    --border-radius-md: 8px;
+    --border-radius-lg: 12px;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --color-background-primary: #1c1c1a;
+      --color-background-secondary: #252523;
+      --color-text-primary: #e8e6de;
+      --color-text-secondary: #9c9a92;
+      --color-text-tertiary: #6b6a64;
+      --color-text-info: #85B7EB;
+      --color-background-info: #042C53;
+      --color-border-tertiary: rgba(255,255,255,0.1);
+      --color-border-secondary: rgba(255,255,255,0.18);
+      --color-border-primary: rgba(255,255,255,0.28);
+    }
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: var(--font-sans); background: var(--color-background-primary); color: var(--color-text-primary); padding: 2rem; max-width: 860px; margin: 0 auto; }
+  h1 { font-size: 18px; font-weight: 500; margin-bottom: 0.25rem; }
+  .summary-grid { display: grid; grid-template-columns: repeat(4, minmax(0,1fr)); gap: 10px; margin-bottom: 1.25rem; }
+  .metric-card { background: var(--color-background-secondary); border-radius: var(--border-radius-md); padding: 0.75rem 1rem; }
+  .metric-label { font-size: 12px; color: var(--color-text-secondary); margin-bottom: 4px; }
+  .metric-value { font-size: 22px; font-weight: 500; }
+  .metric-sub { font-size: 11px; color: var(--color-text-tertiary); margin-top: 2px; }
+  .tabs { display: flex; gap: 6px; margin-bottom: 1rem; flex-wrap: wrap; }
+  .tab { background: transparent; border: 0.5px solid var(--color-border-secondary); border-radius: var(--border-radius-md); padding: 5px 14px; font-size: 13px; cursor: pointer; color: var(--color-text-secondary); }
+  .tab.active { background: var(--color-background-secondary); color: var(--color-text-primary); border-color: var(--color-border-primary); }
+  .panel { display: none; }
+  .panel.active { display: block; }
+  .file-row { display: grid; grid-template-columns: 200px 1fr 56px 56px 56px 80px; align-items: center; gap: 8px; padding: 6px 0; border-bottom: 0.5px solid var(--color-border-tertiary); font-size: 13px; }
+  .file-row:last-child { border-bottom: none; }
+  .file-header { font-size: 11px; color: var(--color-text-tertiary); font-weight: 500; padding: 4px 0 6px; border-bottom: 0.5px solid var(--color-border-secondary); }
+  .fname { color: var(--color-text-primary); font-size: 12px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .fname span { color: var(--color-text-tertiary); }
+  .bar-cell { position: relative; height: 16px; background: var(--color-background-secondary); border-radius: 3px; overflow: hidden; }
+  .bar-fill { height: 100%; border-radius: 3px; }
+  .bar-label { position: absolute; right: 4px; top: 50%; transform: translateY(-50%); font-size: 10px; color: var(--color-text-secondary); }
+  .badge { display: inline-block; padding: 2px 8px; border-radius: 20px; font-size: 11px; font-weight: 500; }
+  .badge-low { background: #EAF3DE; color: #3B6D11; }
+  .badge-med { background: #FAEEDA; color: #854F0B; }
+  .badge-high { background: #FCEBEB; color: #A32D2D; }
+  .num { text-align: center; color: var(--color-text-secondary); }
+  .num.hot { color: #993C1D; font-weight: 500; }
+  .section-title { font-size: 13px; font-weight: 500; margin: 1rem 0 0.5rem; }
+  .dep-grid { display: grid; grid-template-columns: repeat(2, minmax(0,1fr)); gap: 8px; }
+  .dep-card { background: var(--color-background-secondary); border-radius: var(--border-radius-md); padding: 0.75rem; }
+  .dep-card-title { font-size: 12px; font-weight: 500; margin-bottom: 6px; }
+  .dep-item { font-size: 11px; color: var(--color-text-secondary); padding: 2px 0; display: flex; align-items: center; gap: 6px; }
+  .dep-arrow { color: var(--color-text-tertiary); }
+  .insight-list { display: flex; flex-direction: column; gap: 8px; }
+  .insight { display: flex; gap: 10px; align-items: flex-start; background: var(--color-background-secondary); border-radius: var(--border-radius-md); padding: 0.75rem; }
+  .insight-icon { font-size: 14px; flex-shrink: 0; margin-top: 1px; }
+  .insight-text { font-size: 13px; line-height: 1.5; }
+  .insight-sub { font-size: 11px; color: var(--color-text-secondary); margin-top: 2px; }
+  .git-row { display: grid; grid-template-columns: 80px 1fr 80px; gap: 8px; align-items: center; font-size: 12px; padding: 5px 0; border-bottom: 0.5px solid var(--color-border-tertiary); }
+  .git-row:last-child { border-bottom: none; }
+  .commit-hash { font-family: var(--font-mono); font-size: 11px; color: var(--color-text-tertiary); }
+  .commit-tag { font-size: 10px; padding: 1px 6px; border-radius: 10px; background: var(--color-background-info); color: var(--color-text-info); text-align: center; }
+  .filter-row { display: flex; gap: 8px; margin-bottom: 0.75rem; align-items: center; }
+  .filter-btn { background: transparent; border: 0.5px solid var(--color-border-secondary); border-radius: var(--border-radius-md); padding: 3px 10px; font-size: 11px; cursor: pointer; color: var(--color-text-secondary); }
+  .filter-btn.active { background: var(--color-background-secondary); color: var(--color-text-primary); }
+  .complexity-legend { display: flex; gap: 12px; font-size: 11px; color: var(--color-text-secondary); margin-bottom: 8px; align-items: center; flex-wrap: wrap; }
+  .legend-dot { width: 10px; height: 10px; border-radius: 50%; display: inline-block; }
+</style>
+</head>
+<body>
+<h1>aamantran_website — Code Review Graph</h1>
+<p style="font-size:13px;color:var(--color-text-secondary);margin-bottom:1rem;">Next.js 16 · React 19 · TypeScript · 21 files · 2,532 lines</p>
+
+<div class="summary-grid">
+  <div class="metric-card"><div class="metric-label">Total lines</div><div class="metric-value">2,532</div><div class="metric-sub">21 source files</div></div>
+  <div class="metric-card"><div class="metric-label">Avg hooks/file</div><div class="metric-value">6.6</div><div class="metric-sub">Heavy in 4 files</div></div>
+  <div class="metric-card"><div class="metric-label">Git commits</div><div class="metric-value">5</div><div class="metric-sub">1 contributor</div></div>
+  <div class="metric-card"><div class="metric-label">Code quality</div><div class="metric-value" style="color:#3B6D11;">Clean</div><div class="metric-sub">0 any types, 0 todos</div></div>
+</div>
+
+<div class="tabs">
+  <button class="tab active" onclick="showTab('complexity',this)">Complexity</button>
+  <button class="tab" onclick="showTab('deps',this)">Component map</button>
+  <button class="tab" onclick="showTab('git',this)">Git history</button>
+  <button class="tab" onclick="showTab('insights',this)">Review insights</button>
+</div>
+
+<div id="complexity" class="panel active">
+  <div class="complexity-legend">
+    <span><span class="legend-dot" style="background:#639922;"></span> Low (&lt;80 lines)</span>
+    <span><span class="legend-dot" style="background:#BA7517;"></span> Medium (80–200)</span>
+    <span><span class="legend-dot" style="background:#E24B4A;"></span> High (&gt;200 lines)</span>
+  </div>
+  <div class="filter-row">
+    <span style="font-size:11px;color:var(--color-text-secondary);">Filter:</span>
+    <button class="filter-btn active" onclick="filterFiles('all',this)">All</button>
+    <button class="filter-btn" onclick="filterFiles('app',this)">Pages</button>
+    <button class="filter-btn" onclick="filterFiles('components',this)">Components</button>
+    <button class="filter-btn" onclick="filterFiles('lib',this)">Lib</button>
+    <button class="filter-btn" onclick="filterFiles('high',this)">High complexity</button>
+  </div>
+  <div class="file-row file-header">
+    <div>File</div><div>Lines (max 331)</div><div style="text-align:center">Imports</div><div style="text-align:center">Hooks</div><div style="text-align:center">URLs</div><div style="text-align:center">Level</div>
+  </div>
+  <div id="file-list"></div>
+</div>
+
+<div id="deps" class="panel">
+  <div class="section-title">Layout shell (app/layout.tsx)</div>
+  <div style="background:var(--color-background-secondary);border-radius:var(--border-radius-md);padding:0.75rem;margin-bottom:1rem;font-size:13px;color:var(--color-text-secondary);">
+    layout.tsx wraps every page and injects 4 global components: <strong>Nav</strong>, <strong>Footer</strong>, <strong>StickyBar</strong>, <strong>ScrollToTopButton</strong>
+  </div>
+  <div class="dep-grid">
+    <div class="dep-card"><div class="dep-card-title">app/page.tsx (home)</div><div class="dep-item"><span class="dep-arrow">→</span>HeroCarousel</div><div class="dep-item"><span class="dep-arrow">→</span>HomeReviews</div><div class="dep-item"><span class="dep-arrow">→</span>TemplatesCarousel</div><div class="dep-item"><span class="dep-arrow">→</span>ScrollReveal</div><div style="margin-top:6px;font-size:11px;color:var(--color-text-tertiary);">284 lines · 7 imports · SSR</div></div>
+    <div class="dep-card"><div class="dep-card-title">app/templates/[slug]/page.tsx</div><div class="dep-item"><span class="dep-arrow">→</span>ProductReviewsSection</div><div class="dep-item"><span class="dep-arrow">→</span>lib/publicEnv</div><div class="dep-item"><span class="dep-arrow">→</span>lib/assetUrl</div><div style="margin-top:6px;font-size:11px;color:var(--color-text-tertiary);">Dynamic route · SSR fetch</div></div>
+    <div class="dep-card"><div class="dep-card-title">app/checkout/[slug]/page.tsx</div><div class="dep-item"><span class="dep-arrow">→</span>lib/publicEnv (API base)</div><div class="dep-item"><span class="dep-arrow">→</span>useParams, useRouter</div><div class="dep-item"><span class="dep-arrow">→</span>DUMMY_PAYMENT_MODE flag</div><div style="margin-top:6px;font-size:11px;color:var(--color-text-tertiary);">'use client' · API-driven</div></div>
+    <div class="dep-card"><div class="dep-card-title">Shared utilities</div><div class="dep-item"><span class="dep-arrow">→</span>lib/publicEnv.ts — API URL resolver</div><div class="dep-item"><span class="dep-arrow">→</span>lib/assetUrl.ts — CDN URL builder</div><div style="margin-top:6px;font-size:11px;color:var(--color-text-tertiary);">Both read NEXT_PUBLIC_* env vars</div></div>
+  </div>
+  <div class="section-title" style="margin-top:1.25rem;">Static pages</div>
+  <div style="display:flex;flex-wrap:wrap;gap:6px;">
+    <span class="badge badge-low">about</span><span class="badge badge-low">privacy</span><span class="badge badge-low">refund</span><span class="badge badge-low">terms</span><span class="badge badge-med">faq</span><span class="badge badge-med">onboarding</span>
+  </div>
+</div>
+
+<div id="git" class="panel">
+  <div style="font-size:12px;color:var(--color-text-secondary);margin-bottom:0.75rem;">5 commits · 1 author (StrikerStore)</div>
+  <div class="git-row" style="font-size:11px;color:var(--color-text-tertiary);font-weight:500;border-bottom:0.5px solid var(--color-border-secondary);"><div>Hash</div><div>Message</div><div>Tag</div></div>
+  <div class="git-row"><div class="commit-hash">fff7665</div><div>minor fix</div><div><span class="commit-tag">patch</span></div></div>
+  <div class="git-row"><div class="commit-hash">bd4b51a</div><div>v1.0.3 — added contact form</div><div><span class="commit-tag">feature</span></div></div>
+  <div class="git-row"><div class="commit-hash">67ac8ec</div><div>v1.0.2 — updated footer link</div><div><span class="commit-tag">fix</span></div></div>
+  <div class="git-row"><div class="commit-hash">6832a50</div><div>Initial v1.0.1</div><div><span class="commit-tag">init</span></div></div>
+  <div class="git-row"><div class="commit-hash">d655fdc</div><div>Initial v1</div><div><span class="commit-tag">init</span></div></div>
+  <div class="section-title" style="margin-top:1rem;">Most changed files</div>
+  <div id="churn-list"></div>
+</div>
+
+<div id="insights" class="panel">
+  <div class="insight-list">
+    <div class="insight"><div class="insight-icon">✓</div><div><div class="insight-text"><strong>Zero type-safety issues</strong> — no <code>any</code> types or unsafe casts found across all 21 files.</div></div></div>
+    <div class="insight"><div class="insight-icon">✓</div><div><div class="insight-text"><strong>Clean codebase</strong> — no console.log statements, no TODO/FIXME markers, no leftover debug code.</div></div></div>
+    <div class="insight"><div class="insight-icon">⚠</div><div><div class="insight-text"><strong>HeroCarousel.tsx is the most complex file</strong> — 331 lines with 17 hooks. Consider splitting into sub-components.</div><div class="insight-sub">components/HeroCarousel.tsx · 331 lines · 17 hooks</div></div></div>
+    <div class="insight"><div class="insight-icon">⚠</div><div><div class="insight-text"><strong>app/templates/page.tsx is oversized</strong> — 324 lines and 18 hooks. Extract filter logic and template card into separate components.</div><div class="insight-sub">app/templates/page.tsx · 324 lines · 18 hooks</div></div></div>
+    <div class="insight"><div class="insight-icon">⚠</div><div><div class="insight-text"><strong>app/onboarding/page.tsx has 20 hooks</strong> — highest hook density. Consider a form library or custom hook.</div><div class="insight-sub">app/onboarding/page.tsx · 270 lines · 20 hooks</div></div></div>
+    <div class="insight"><div class="insight-icon">⚠</div><div><div class="insight-text"><strong>4 hardcoded URLs in app/layout.tsx</strong> — move to a config or constants file.</div></div></div>
+    <div class="insight"><div class="insight-icon">ℹ</div><div><div class="insight-text"><strong>DUMMY_PAYMENT_MODE flag in checkout</strong> — ensure this is never true in production. Add a CI check.</div></div></div>
+    <div class="insight"><div class="insight-icon">ℹ</div><div><div class="insight-text"><strong>Early-stage project (5 commits)</strong> — recommend adding CHANGELOG.md and a branch strategy before scaling the team.</div></div></div>
+  </div>
+</div>
+
+<script>
+const files = [
+  {name:'page.tsx',dir:'app/',lines:284,imports:7,hooks:0,urls:0},
+  {name:'layout.tsx',dir:'app/',lines:47,imports:7,hooks:0,urls:4},
+  {name:'about/page.tsx',dir:'app/',lines:81,imports:2,hooks:0,urls:0},
+  {name:'contact/page.tsx',dir:'app/',lines:136,imports:2,hooks:4,urls:1},
+  {name:'faq/page.tsx',dir:'app/',lines:97,imports:2,hooks:2,urls:0},
+  {name:'onboarding/page.tsx',dir:'app/',lines:270,imports:5,hooks:20,urls:0},
+  {name:'templates/page.tsx',dir:'app/',lines:324,imports:5,hooks:18,urls:0},
+  {name:'privacy/page.tsx',dir:'app/',lines:88,imports:2,hooks:0,urls:0},
+  {name:'refund/page.tsx',dir:'app/',lines:63,imports:1,hooks:0,urls:0},
+  {name:'terms/page.tsx',dir:'app/',lines:75,imports:2,hooks:0,urls:0},
+  {name:'Footer.tsx',dir:'components/',lines:125,imports:4,hooks:2,urls:0},
+  {name:'HeroCarousel.tsx',dir:'components/',lines:331,imports:4,hooks:17,urls:0},
+  {name:'HomeReviews.tsx',dir:'components/',lines:116,imports:2,hooks:13,urls:0},
+  {name:'Nav.tsx',dir:'components/',lines:63,imports:3,hooks:5,urls:0},
+  {name:'ProductReviewsSection.tsx',dir:'components/',lines:115,imports:1,hooks:13,urls:0},
+  {name:'ScrollReveal.tsx',dir:'components/',lines:32,imports:1,hooks:4,urls:0},
+  {name:'ScrollToTopButton.tsx',dir:'components/',lines:34,imports:2,hooks:4,urls:0},
+  {name:'StickyBar.tsx',dir:'components/',lines:24,imports:2,hooks:4,urls:0},
+  {name:'TemplatesCarousel.tsx',dir:'components/',lines:195,imports:5,hooks:11,urls:0},
+  {name:'assetUrl.ts',dir:'lib/',lines:13,imports:1,hooks:0,urls:1},
+  {name:'publicEnv.ts',dir:'lib/',lines:19,imports:0,hooks:0,urls:4},
+];
+const churn=[
+  {name:'components/HomeReviews.tsx',count:2},{name:'components/Footer.tsx',count:2},
+  {name:'app/page.tsx',count:2},{name:'app/onboarding/page.tsx',count:2},
+  {name:'app/contact/page.tsx',count:2},{name:'components/TemplatesCarousel.tsx',count:1},
+  {name:'lib/publicEnv.ts',count:1},{name:'lib/assetUrl.ts',count:1},
+];
+function complexityColor(l){return l>200?'#E24B4A':l>80?'#EF9F27':'#639922';}
+function complexityBadge(l,h){const s=l+h*10;return s>250?'<span class="badge badge-high">High</span>':s>120?'<span class="badge badge-med">Medium</span>':'<span class="badge badge-low">Low</span>';}
+function renderFiles(filter){
+  const list=document.getElementById('file-list');
+  const f=files.filter(f=>filter==='all'?true:filter==='app'?f.dir==='app/':filter==='components'?f.dir==='components/':filter==='lib'?f.dir==='lib/':f.lines>200||f.hooks>10);
+  list.innerHTML=f.map(f=>{const p=Math.round((f.lines/331)*100);const c=complexityColor(f.lines);return`<div class="file-row"><div class="fname"><span>${f.dir}</span>${f.name}</div><div class="bar-cell"><div class="bar-fill" style="width:${p}%;background:${c};opacity:0.7;"></div><span class="bar-label">${f.lines}</span></div><div class="num${f.imports>5?' hot':''}">${f.imports}</div><div class="num${f.hooks>10?' hot':''}">${f.hooks}</div><div class="num${f.urls>2?' hot':''}">${f.urls>0?f.urls:'—'}</div><div>${complexityBadge(f.lines,f.hooks)}</div></div>`;}).join('');
+}
+function filterFiles(filter,btn){document.querySelectorAll('.filter-btn').forEach(b=>b.classList.remove('active'));btn.classList.add('active');renderFiles(filter);}
+function showTab(id,btn){document.querySelectorAll('.panel').forEach(p=>p.classList.remove('active'));document.querySelectorAll('.tab').forEach(t=>t.classList.remove('active'));document.getElementById(id).classList.add('active');btn.classList.add('active');}
+function renderChurn(){const el=document.getElementById('churn-list');el.innerHTML=churn.map(c=>{const p=Math.round((c.count/2)*100);return`<div style="display:grid;grid-template-columns:220px 1fr 24px;gap:8px;align-items:center;padding:5px 0;border-bottom:0.5px solid var(--color-border-tertiary);font-size:12px;"><div style="color:var(--color-text-secondary);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${c.name}</div><div class="bar-cell"><div class="bar-fill" style="width:${p}%;background:#3B8BD4;opacity:0.6;"></div></div><div style="text-align:center;color:var(--color-text-secondary);">${c.count}x</div></div>`;}).join('');}
+renderFiles('all');renderChurn();
+</script>
+</body>
+</html>
