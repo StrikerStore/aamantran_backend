@@ -49,7 +49,7 @@ async function sendBalancePaymentEmail({
   isPlaceholder = false,
 }) {
   const placeholderNote = isPlaceholder
-    ? `<p style="color:#666;font-size:14px;"><em>This link is a placeholder until live payments are enabled. Your host will send a real Razorpay link when ready.</em></p>`
+    ? `<p style="color:#666;font-size:14px;"><em>This link is a placeholder until live payments are enabled. Your host will send a real payment link when ready.</em></p>`
     : '';
   return sendMail({
     to,

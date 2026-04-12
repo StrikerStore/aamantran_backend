@@ -54,13 +54,19 @@ app.use(
         fontSrc:    ["'self'", "https://fonts.gstatic.com", "data:"],
         connectSrc: ["'self'", "https:"],
         mediaSrc:   ["'self'", "https:", "blob:"],
-        // Razorpay checkout + YouTube/Vimeo embeds from demo/custom field URLs in templates
+        // PayU payment page + YouTube/Vimeo embeds from demo/custom field URLs in templates
         frameSrc: [
           "'self'",
-          'https://api.razorpay.com',
+          'https://secure.payu.in',
+          'https://test.payu.in',
           'https://www.youtube.com',
           'https://www.youtube-nocookie.com',
           'https://player.vimeo.com',
+        ],
+        formAction: [
+          "'self'",
+          'https://secure.payu.in',
+          'https://test.payu.in',
         ],
       },
     },
@@ -75,10 +81,11 @@ app.use((_req, res, next) => {
   next();
 });
 
-// Razorpay webhooks: raw body + signature — MUST be before express.json()
+// PayU IPN: form-encoded body — mount before express.json() but after express.urlencoded()
+// PayU sends application/x-www-form-urlencoded for IPN callbacks
 app.use(
   '/webhooks',
-  express.raw({ type: 'application/json', limit: '2mb' }),
+  express.urlencoded({ extended: true, limit: '2mb' }),
   webhookRouter
 );
 

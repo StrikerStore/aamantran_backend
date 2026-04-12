@@ -110,8 +110,8 @@ model TemplateSwapRequest {
   toTemplateId   String
   toTemplate     Template @relation(fields: [toTemplateId], references: [id])
   balanceAmount  Int      // paise
-  razorpayLinkId String?
-  razorpayLinkUrl String?
+  payuLinkId  String?
+  payuLinkUrl String?
   status         String   @default("pending") // pending|paid|cancelled
   createdAt      DateTime @default(now())
   updatedAt      DateTime @updatedAt
@@ -355,8 +355,8 @@ model Payment {
   event             Event?   @relation(fields: [eventId], references: [id])
   templateId        String
   template          Template @relation(fields: [templateId], references: [id])
-  razorpayOrderId   String?
-  razorpayPaymentId String?
+  payuTxnId         String?
+  payuMihpayid      String?
   customerEmail     String?
   couponCode        String?
   discountAmount    Int?     @default(0)

@@ -1,85 +1,98 @@
 const express = require('express');
 const prisma  = require('../utils/prisma');
-const { verifyWebhookSignature } = require('../services/razorpay.service');
+const { verifyResponseHash } = require('../services/payu.service');
 
 const router = express.Router();
 
-// POST /webhooks/razorpay
-// Body must be raw JSON buffer — mount in app.js with express.raw() BEFORE express.json()
-router.post('/razorpay', async (req, res) => {
-  const signature = req.headers['x-razorpay-signature'];
-  const rawBody = Buffer.isBuffer(req.body) ? req.body.toString('utf8') : String(req.body || '');
+/**
+ * POST /webhooks/payu
+ *
+ * PayU IPN (Instant Payment Notification) — identical hash algorithm
+ * to the redirect callback.  PayU sends application/x-www-form-urlencoded
+ * so this must be mounted AFTER express.urlencoded() in app.js.
+ *
+ * Handles:
+ *  - Direct template purchases (payuTxnId on Payment)
+ *  - Template swap balance payments (payuLinkId on TemplateSwapRequest)
+ */
+router.post('/payu', async (req, res) => {
+  // PayU IPN sends form-encoded data
+  const params = req.body || {};
 
-  if (!verifyWebhookSignature(rawBody, signature)) {
-    return res.status(400).json({ ok: false, message: 'Invalid signature' });
+  if (!verifyResponseHash(params)) {
+    return res.status(400).json({ ok: false, message: 'Invalid hash' });
   }
 
-  let event;
-  try {
-    event = JSON.parse(rawBody);
-  } catch {
-    return res.status(400).json({ ok: false, message: 'Invalid JSON body' });
-  }
+  const { txnid, mihpayid, status } = params;
 
-  try {
-    const type = event.event;
-
-    // payment.captured — mark Payment as paid
-    if (type === 'payment.captured') {
-      const p = event.payload?.payment?.entity;
-      if (p?.id) {
+  if (status !== 'success') {
+    // Non-success IPN — mark payment as failed if still pending
+    try {
+      if (txnid) {
         await prisma.payment.updateMany({
-          where: { razorpayPaymentId: p.id },
-          data:  { status: 'paid' },
+          where: { payuTxnId: txnid, status: 'pending' },
+          data:  { status: 'failed' },
         });
       }
+    } catch {
+      // best-effort
+    }
+    return res.json({ ok: true });
+  }
+
+  try {
+    // 1. Try direct template purchase
+    const payment = await prisma.payment.findFirst({
+      where: { payuTxnId: txnid },
+    });
+
+    if (payment && payment.status !== 'paid') {
+      await prisma.payment.update({
+        where: { id: payment.id },
+        data:  { status: 'paid', payuMihpayid: mihpayid || null },
+      });
     }
 
-    // payment_link.paid — complete a pending template swap
-    if (type === 'payment_link.paid') {
-      const linkId = event.payload?.payment_link?.entity?.id;
+    // 2. Try swap payment
+    const swap = await prisma.templateSwapRequest.findFirst({
+      where: { payuLinkId: txnid, status: 'pending' },
+    });
 
-      if (linkId) {
-        const swapRequest = await prisma.templateSwapRequest.findFirst({
-          where: { razorpayLinkId: linkId, status: 'pending' },
+    if (swap) {
+      await prisma.event.update({
+        where: { id: swap.eventId },
+        data:  { templateId: swap.toTemplateId },
+      });
+      if (swap.pairedEventId) {
+        await prisma.event.update({
+          where: { id: swap.pairedEventId },
+          data:  { templateId: swap.toTemplateId },
         });
+      }
+      await prisma.templateSwapRequest.update({
+        where: { id: swap.id },
+        data:  { status: 'paid' },
+      });
 
-        if (swapRequest) {
-          await prisma.event.update({
-            where: { id: swapRequest.eventId },
-            data:  { templateId: swapRequest.toTemplateId },
-          });
-          if (swapRequest.pairedEventId) {
-            await prisma.event.update({
-              where: { id: swapRequest.pairedEventId },
-              data:  { templateId: swapRequest.toTemplateId },
-            });
-          }
-
-          await prisma.templateSwapRequest.update({
-            where: { id: swapRequest.id },
-            data:  { status: 'paid' },
-          });
-
-          const p = event.payload?.payment?.entity;
-          if (p?.id) {
-            await prisma.payment.create({
-              data: {
-                userId:           swapRequest.userId,
-                eventId:          swapRequest.eventId,
-                templateId:       swapRequest.toTemplateId,
-                razorpayPaymentId: p.id,
-                amount:           swapRequest.balanceAmount,
-                status:           'paid',
-              },
-            });
-          }
-        }
+      // Create payment record if not already created by the redirect handler
+      const existing = await prisma.payment.findFirst({ where: { payuTxnId: txnid } });
+      if (!existing && mihpayid) {
+        await prisma.payment.create({
+          data: {
+            userId:       swap.userId,
+            eventId:      swap.eventId,
+            templateId:   swap.toTemplateId,
+            payuTxnId:    txnid,
+            payuMihpayid: mihpayid,
+            amount:       swap.balanceAmount,
+            status:       'paid',
+          },
+        });
       }
     }
   } catch (err) {
-    console.error('[Webhook] Error processing event:', err.message);
-    return res.status(500).json({ ok: false, message: 'Webhook processing error' });
+    console.error('[Webhook/PayU] Error processing IPN:', err.message);
+    return res.status(500).json({ ok: false, message: 'IPN processing error' });
   }
 
   res.json({ ok: true });

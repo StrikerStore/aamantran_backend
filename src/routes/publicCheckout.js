@@ -1,9 +1,14 @@
 const express = require('express');
-const crypto = require('crypto');
-const bcrypt = require('bcrypt');
-const prisma = require('../utils/prisma');
+const crypto  = require('crypto');
+const bcrypt  = require('bcrypt');
+const { v4: uuidv4 } = require('uuid');
+const prisma  = require('../utils/prisma');
 const { checkoutLimiter, lookupLimiter } = require('../middleware/rateLimits');
-const { createOrder } = require('../services/razorpay.service');
+const {
+  buildPaymentParams,
+  verifyResponseHash,
+  payuPaymentUrl,
+} = require('../services/payu.service');
 const {
   sendPurchaseConfirmationEmail,
   sendOnboardingCompleteEmail,
@@ -99,6 +104,28 @@ async function getCouponDiscount(baseAmount, couponCodeRaw, customerEmailRaw) {
   return { code: coupon.code, discountPct, discountAmount };
 }
 
+// ─── Helper: mark a payment as paid and fire purchase email ──────────────────
+
+async function markPaymentPaid(payment, mihpayid) {
+  const updated = await prisma.payment.update({
+    where: { id: payment.id },
+    data: { status: 'paid', payuMihpayid: mihpayid || null },
+    include: { template: { select: { name: true, slug: true } } },
+  });
+
+  if (updated.customerEmail) {
+    const onboardingUrl = `${siteUrls.landingUrl()}/onboarding?paymentId=${encodeURIComponent(updated.id)}&slug=${encodeURIComponent(updated.template.slug)}&template=${encodeURIComponent(updated.template.name)}`;
+    sendPurchaseConfirmationEmail({
+      to: updated.customerEmail,
+      templateName: updated.template.name,
+      amount: updated.amount,
+      onboardingUrl,
+    }).catch(() => {});
+  }
+
+  return updated;
+}
+
 // POST /api/checkout/coupon-preview
 router.post('/coupon-preview', async (req, res) => {
   try {
@@ -130,15 +157,15 @@ router.post('/coupon-preview', async (req, res) => {
         finalAmount,
       },
     });
-  } catch (err) {
+  } catch {
     return res.status(500).json({ message: 'Failed to preview coupon' });
   }
 });
 
-// POST /api/checkout/order
+// POST /api/checkout/order — creates pending payment, returns PayU form params
 router.post('/order', async (req, res) => {
   try {
-    const { templateSlug, couponCode, customerEmail } = req.body || {};
+    const { templateSlug, couponCode, customerEmail, customerContact } = req.body || {};
     if (!templateSlug) return res.status(400).json({ message: 'templateSlug is required' });
 
     const template = await prisma.template.findUnique({
@@ -148,111 +175,244 @@ router.post('/order', async (req, res) => {
     if (!template) return res.status(404).json({ message: 'Template not found' });
 
     const coupon = await getCouponDiscount(template.price, couponCode, customerEmail);
-    const discountPct = coupon.discountPct;
+    const discountPct    = coupon.discountPct;
     const discountAmount = coupon.discountAmount;
-    const taxableAmount = Math.max(100, template.price - discountAmount);
-    const gstPercent = Number(template.gstPercent || 0);
-    const gstAmount = Math.round((taxableAmount * gstPercent) / 100);
-    const finalAmount = taxableAmount + gstAmount;
+    const taxableAmount  = Math.max(100, template.price - discountAmount);
+    const gstPercent     = Number(template.gstPercent || 0);
+    const gstAmount      = Math.round((taxableAmount * gstPercent) / 100);
+    const finalAmount    = taxableAmount + gstAmount;
 
-    const order = DUMMY_PAYMENT_MODE
-      ? { id: `mock_order_${Date.now()}` }
-      : await createOrder({
-          amountPaise: finalAmount,
-          receipt: `tpl_${template.slug}_${Date.now()}`,
-          notes: { templateSlug: template.slug },
-        });
+    const txnid = uuidv4().replace(/-/g, '').slice(0, 25);
 
     const payment = await prisma.payment.create({
       data: {
-        templateId: template.id,
-        razorpayOrderId: order.id,
+        templateId:    template.id,
+        payuTxnId:     txnid,
         customerEmail: customerEmail ? String(customerEmail).trim().toLowerCase() : null,
-        couponCode: coupon.discountPct > 0 ? coupon.code : null,
+        couponCode:    coupon.discountPct > 0 ? coupon.code : null,
         discountAmount,
-        amount: finalAmount,
-        currency: 'INR',
-        status: 'pending',
+        amount:        finalAmount,
+        currency:      'INR',
+        status:        'pending',
       },
       select: { id: true },
     });
 
-    return res.json({
-      key: process.env.RAZORPAY_KEY_ID,
-      amount: finalAmount,
-      currency: 'INR',
-      paymentId: payment.id,
-      orderId: order.id,
-      priceBreakup: {
-        baseAmount: template.price,
-        discountAmount,
-        gstPercent,
-        gstAmount,
-        finalAmount,
-        discountPct,
-      },
+    if (DUMMY_PAYMENT_MODE) {
+      return res.json({
+        paymentId: payment.id,
+        amount:    finalAmount,
+        dummy:     true,
+        priceBreakup: { baseAmount: template.price, discountAmount, gstPercent, gstAmount, finalAmount, discountPct },
+      });
+    }
+
+    const apiBase   = siteUrls.apiBaseUrl();
+    const firstname = String(customerEmail || '').split('@')[0].replace(/[^a-zA-Z0-9 _-]/g, '').slice(0, 30) || 'Customer';
+    const payuParams = buildPaymentParams({
+      txnid,
+      amountPaise:  finalAmount,
+      productinfo:  `Aamantran - ${template.name}`,
+      firstname,
+      email:        customerEmail ? String(customerEmail).trim().toLowerCase() : '',
+      phone:        customerContact ? String(customerContact).replace(/\D/g, '').slice(0, 10) : '',
+      successUrl:   `${apiBase}/api/checkout/payu-success`,
+      failureUrl:   `${apiBase}/api/checkout/payu-failure`,
     });
-  } catch (err) {
+
+    return res.json({
+      payuUrl:    payuPaymentUrl(),
+      payuParams,
+      paymentId:  payment.id,
+      amount:     finalAmount,
+      priceBreakup: { baseAmount: template.price, discountAmount, gstPercent, gstAmount, finalAmount, discountPct },
+    });
+  } catch {
     return res.status(500).json({ message: 'Failed to create checkout order' });
   }
 });
 
-// POST /api/checkout/verify
-router.post('/verify', async (req, res) => {
+// POST /api/checkout/payu-success — PayU redirects here on successful payment
+router.post('/payu-success', async (req, res) => {
+  const params = req.body || {};
+
   try {
-    const { paymentId, razorpay_payment_id, razorpay_order_id, razorpay_signature } = req.body || {};
-    if (!paymentId || !razorpay_payment_id || !razorpay_order_id || !razorpay_signature) {
-      return res.status(400).json({ message: 'Missing payment verification fields' });
+    if (!verifyResponseHash(params)) {
+      return res.redirect(`${siteUrls.landingUrl()}/?payment=failed&reason=invalid_signature`);
     }
 
-    const paymentRow = await prisma.payment.findUnique({
-      where: { id: paymentId },
-      include: { template: { select: { name: true, slug: true } } },
-    });
-    if (!paymentRow) {
-      return res.status(404).json({ message: 'Payment not found' });
-    }
-    if (paymentRow.status === 'paid') {
-      return res.json({ ok: true });
-    }
-    if (paymentRow.razorpayOrderId !== razorpay_order_id) {
-      return res.status(400).json({ message: 'Order does not match this payment' });
+    const { txnid, mihpayid, status } = params;
+
+    if (status !== 'success') {
+      return res.redirect(`${siteUrls.landingUrl()}/?payment=failed&reason=${encodeURIComponent(status || 'unknown')}`);
     }
 
-    const payload = `${razorpay_order_id}|${razorpay_payment_id}`;
-    const expected = crypto
-      .createHmac('sha256', process.env.RAZORPAY_KEY_SECRET)
-      .update(payload)
-      .digest('hex');
-
-    if (expected !== razorpay_signature) {
-      return res.status(400).json({ message: 'Invalid payment signature' });
-    }
-
-    const payment = await prisma.payment.update({
-      where: { id: paymentId },
-      data: {
-        status: 'paid',
-        razorpayOrderId: razorpay_order_id,
-        razorpayPaymentId: razorpay_payment_id,
-      },
+    const payment = await prisma.payment.findFirst({
+      where: { payuTxnId: txnid },
       include: { template: { select: { name: true, slug: true } } },
     });
 
-    if (payment.customerEmail) {
-      const onboardingUrl = `${siteUrls.landingUrl()}/onboarding?paymentId=${encodeURIComponent(payment.id)}&slug=${encodeURIComponent(payment.template.slug)}&template=${encodeURIComponent(payment.template.name)}`;
-      sendPurchaseConfirmationEmail({
-        to: payment.customerEmail,
-        templateName: payment.template.name,
-        amount: payment.amount,
-        onboardingUrl,
-      }).catch(() => {});
+    if (!payment) {
+      return res.redirect(`${siteUrls.landingUrl()}/?payment=failed&reason=not_found`);
     }
 
-    return res.json({ ok: true });
+    if (payment.status !== 'paid') {
+      await markPaymentPaid(payment, mihpayid);
+    }
+
+    const onboardingUrl = `${siteUrls.landingUrl()}/onboarding?paymentId=${encodeURIComponent(payment.id)}&slug=${encodeURIComponent(payment.template.slug)}&template=${encodeURIComponent(payment.template.name)}`;
+    return res.redirect(onboardingUrl);
   } catch (err) {
-    return res.status(500).json({ message: 'Payment verification failed' });
+    console.error('[PayU] payu-success error:', err.message);
+    return res.redirect(`${siteUrls.landingUrl()}/?payment=failed&reason=server_error`);
   }
+});
+
+// POST /api/checkout/payu-failure — PayU redirects here on failed payment
+router.post('/payu-failure', async (req, res) => {
+  const params   = req.body || {};
+  const { txnid } = params;
+
+  try {
+    if (txnid) {
+      await prisma.payment.updateMany({
+        where: { payuTxnId: txnid, status: 'pending' },
+        data:  { status: 'failed' },
+      });
+    }
+  } catch {
+    // best-effort
+  }
+
+  return res.redirect(`${siteUrls.landingUrl()}/?payment=failed`);
+});
+
+// ─── Swap payment auto-submit page ───────────────────────────────────────────
+
+// GET /api/checkout/payu-swap-link/:txnid — auto-submitting HTML form for swap balance payment
+router.get('/payu-swap-link/:txnid', async (req, res) => {
+  const { txnid } = req.params;
+
+  try {
+    const swap = await prisma.templateSwapRequest.findFirst({
+      where:   { payuLinkId: txnid, status: 'pending' },
+      include: { user: { select: { username: true, email: true, phone: true } } },
+    });
+
+    if (!swap) {
+      return res.status(404).send('<h2>Payment link not found or already used.</h2>');
+    }
+
+    const apiBase  = siteUrls.apiBaseUrl();
+    const email    = swap.user?.email || '';
+    const phone    = swap.user?.phone || '';
+    const firstname = String(email).split('@')[0].replace(/[^a-zA-Z0-9 _-]/g, '').slice(0, 30) || 'Customer';
+
+    const params = buildPaymentParams({
+      txnid,
+      amountPaise:  swap.balanceAmount,
+      productinfo:  'Aamantran - Template Upgrade',
+      firstname,
+      email,
+      phone:        phone.replace(/\D/g, '').slice(0, 10),
+      successUrl:   `${apiBase}/api/checkout/payu-swap-success`,
+      failureUrl:   `${apiBase}/api/checkout/payu-swap-failure`,
+    });
+
+    const fields = Object.entries(params)
+      .map(([k, v]) => `<input type="hidden" name="${k}" value="${String(v).replace(/"/g, '&quot;')}" />`)
+      .join('\n      ');
+
+    const html = `<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<title>Redirecting to payment…</title>
+<style>body{font-family:sans-serif;display:flex;align-items:center;justify-content:center;height:100vh;margin:0;background:#f9f5f1;}</style>
+</head>
+<body>
+<p>Redirecting to secure payment page…</p>
+<form id="payuForm" method="POST" action="${payuPaymentUrl()}">
+      ${fields}
+</form>
+<script>document.getElementById('payuForm').submit();</script>
+</body>
+</html>`;
+
+    return res.send(html);
+  } catch (err) {
+    console.error('[PayU] payu-swap-link error:', err.message);
+    return res.status(500).send('<h2>Could not load payment page. Please try again later.</h2>');
+  }
+});
+
+// POST /api/checkout/payu-swap-success — PayU redirects here after swap payment success
+router.post('/payu-swap-success', async (req, res) => {
+  const params = req.body || {};
+
+  try {
+    if (!verifyResponseHash(params)) {
+      return res.redirect(`${siteUrls.coupleDashboardUrl()}/?payment=failed&reason=invalid_signature`);
+    }
+
+    const { txnid, mihpayid, status } = params;
+
+    if (status !== 'success') {
+      return res.redirect(`${siteUrls.coupleDashboardUrl()}/?payment=failed&reason=${encodeURIComponent(status || 'unknown')}`);
+    }
+
+    const swap = await prisma.templateSwapRequest.findFirst({
+      where: { payuLinkId: txnid, status: 'pending' },
+    });
+
+    if (!swap) {
+      // Already processed — redirect to dashboard
+      return res.redirect(`${siteUrls.coupleDashboardUrl()}/?payment=already_processed`);
+    }
+
+    // Apply the template swap to the event(s)
+    await prisma.event.update({
+      where: { id: swap.eventId },
+      data:  { templateId: swap.toTemplateId },
+    });
+    if (swap.pairedEventId) {
+      await prisma.event.update({
+        where: { id: swap.pairedEventId },
+        data:  { templateId: swap.toTemplateId },
+      });
+    }
+
+    await prisma.templateSwapRequest.update({
+      where: { id: swap.id },
+      data:  { status: 'paid' },
+    });
+
+    // Create a payment record for the swap
+    if (mihpayid) {
+      await prisma.payment.create({
+        data: {
+          userId:      swap.userId,
+          eventId:     swap.eventId,
+          templateId:  swap.toTemplateId,
+          payuTxnId:   txnid,
+          payuMihpayid: mihpayid,
+          amount:      swap.balanceAmount,
+          status:      'paid',
+        },
+      });
+    }
+
+    return res.redirect(`${siteUrls.coupleDashboardUrl()}/?payment=success`);
+  } catch (err) {
+    console.error('[PayU] payu-swap-success error:', err.message);
+    return res.redirect(`${siteUrls.coupleDashboardUrl()}/?payment=failed&reason=server_error`);
+  }
+});
+
+// POST /api/checkout/payu-swap-failure
+router.post('/payu-swap-failure', async (req, res) => {
+  return res.redirect(`${siteUrls.coupleDashboardUrl()}/?payment=failed`);
 });
 
 // POST /api/checkout/mock-success
@@ -268,9 +428,9 @@ router.post('/mock-success', async (req, res) => {
     const payment = await prisma.payment.update({
       where: { id: paymentId },
       data: {
-        status: 'paid',
-        razorpayOrderId: `mock_order_${Date.now()}`,
-        razorpayPaymentId: `mock_payment_${Date.now()}`,
+        status:      'paid',
+        payuTxnId:   `mock_txn_${Date.now()}`,
+        payuMihpayid: `mock_mihpay_${Date.now()}`,
       },
       include: { template: { select: { name: true, slug: true } } },
     });
@@ -286,22 +446,21 @@ router.post('/mock-success', async (req, res) => {
     }
 
     return res.json({ ok: true });
-  } catch (err) {
+  } catch {
     return res.status(500).json({ message: 'Mock payment failed' });
   }
 });
 
 // GET /api/checkout/lookup-email?email= — public
-// Returns { exists, username } — used on onboarding page to autofill username
 router.get('/lookup-email', lookupLimiter, async (req, res) => {
   try {
     const emailLower = String(req.query.email || '').trim().toLowerCase();
     if (!emailLower) return res.json({ ok: true, exists: false });
 
     const user = await prisma.user.findFirst({
-      where: { email: emailLower },
-      select: { username: true },
-      orderBy: { createdAt: 'desc' }, // most recent account for this email
+      where:   { email: emailLower },
+      select:  { username: true },
+      orderBy: { createdAt: 'desc' },
     });
 
     if (!user) return res.json({ ok: true, exists: false });
@@ -329,8 +488,6 @@ router.get('/check-username', lookupLimiter, async (req, res) => {
 });
 
 // POST /api/checkout/register
-// Smart: if username already exists and email matches → link payment to existing user
-//        if username is new → create fresh account (password required)
 router.post('/register', async (req, res) => {
   try {
     const { paymentId, templateSlug, username, email, contact, password } = req.body || {};
@@ -338,13 +495,12 @@ router.post('/register', async (req, res) => {
       return res.status(400).json({ message: 'paymentId, templateSlug, username, email, and contact are required' });
     }
 
-    const emailLower = String(email).toLowerCase().trim();
+    const emailLower   = String(email).toLowerCase().trim();
     const usernameNorm = normalizeUsername(username);
 
     if (!isValidUsername(usernameNorm)) {
       return res.status(400).json({
-        message:
-          'Username must be 3–32 characters: start with a letter or number; only letters, numbers, dots, underscores, hyphens',
+        message: 'Username must be 3–32 characters: start with a letter or number; only letters, numbers, dots, underscores, hyphens',
       });
     }
     if (String(password).length < 8) {
@@ -352,7 +508,7 @@ router.post('/register', async (req, res) => {
     }
 
     const payment = await prisma.payment.findUnique({
-      where: { id: paymentId },
+      where:   { id: paymentId },
       include: { template: true },
     });
     if (!payment || payment.status !== 'paid') {
@@ -366,57 +522,47 @@ router.post('/register', async (req, res) => {
       return res.status(400).json({ message: 'This purchase has already been registered' });
     }
 
-    // Check if username already exists
     const existingUser = await prisma.user.findFirst({ where: { username: usernameNorm } });
 
     if (existingUser) {
-      // Username exists — link only if email matches (same person buying again)
       if (existingUser.email !== emailLower) {
         return res.status(409).json({ message: 'This username belongs to a different account. Choose a different username or use your original email.' });
       }
-      // Link payment to existing user — no new user created, no password needed
       const eventSlug = await ensureUniqueEventSlug(`${usernameNorm}-${payment.template.slug}`);
       const eventType = inferEventTypeFromTemplate(payment.template);
       const event = await prisma.event.create({
         data: {
-          slug: eventSlug,
-          ownerId: existingUser.id,
+          slug:       eventSlug,
+          ownerId:    existingUser.id,
           templateId: payment.templateId,
-          community: payment.template.community || 'universal',
+          community:  payment.template.community || 'universal',
           eventType,
-          language: 'en',
+          language:   'en',
         },
         select: { id: true },
       });
       await prisma.payment.update({
         where: { id: paymentId },
-        data: { userId: existingUser.id, eventId: event.id, isOnboarded: true, onboardedAt: new Date() },
+        data:  { userId: existingUser.id, eventId: event.id, isOnboarded: true, onboardedAt: new Date() },
       });
       sendOnboardingCompleteEmail({
-        to: existingUser.email,
-        username: existingUser.username,
+        to:           existingUser.email,
+        username:     existingUser.username,
         dashboardUrl: siteUrls.coupleDashboardUrl(),
       }).catch(() => {});
-      return res.json({
-        ok: true,
-        linked: true,
-        eventCreated: true,
-        dashboardUrl: siteUrls.coupleDashboardUrl(),
-      });
+      return res.json({ ok: true, linked: true, eventCreated: true, dashboardUrl: siteUrls.coupleDashboardUrl() });
     }
 
-    // Username is new — create fresh account (password required)
     if (!password || String(password).length < 8) {
       return res.status(400).json({ message: 'Password must be at least 8 characters for a new account' });
     }
 
     const passwordHash = await bcrypt.hash(String(password), 10);
-
     const user = await prisma.user.create({
       data: {
-        email: emailLower,
-        username: usernameNorm,
-        phone: String(contact).trim(),
+        email:        emailLower,
+        username:     usernameNorm,
+        phone:        String(contact).trim(),
         passwordHash,
       },
       select: { id: true },
@@ -426,32 +572,27 @@ router.post('/register', async (req, res) => {
     const eventType = inferEventTypeFromTemplate(payment.template);
     const event = await prisma.event.create({
       data: {
-        slug: eventSlug,
-        ownerId: user.id,
+        slug:       eventSlug,
+        ownerId:    user.id,
         templateId: payment.templateId,
-        community: payment.template.community || 'universal',
+        community:  payment.template.community || 'universal',
         eventType,
-        language: 'en',
+        language:   'en',
       },
       select: { id: true },
     });
 
     await prisma.payment.update({
       where: { id: paymentId },
-      data: { userId: user.id, eventId: event.id, isOnboarded: true, onboardedAt: new Date() },
+      data:  { userId: user.id, eventId: event.id, isOnboarded: true, onboardedAt: new Date() },
     });
     sendOnboardingCompleteEmail({
-      to: user.email,
-      username: user.username,
+      to:           user.email,
+      username:     user.username,
       dashboardUrl: siteUrls.coupleDashboardUrl(),
     }).catch(() => {});
 
-    return res.json({
-      ok: true,
-      linked: false,
-      eventCreated: true,
-      dashboardUrl: siteUrls.coupleDashboardUrl(),
-    });
+    return res.json({ ok: true, linked: false, eventCreated: true, dashboardUrl: siteUrls.coupleDashboardUrl() });
   } catch (err) {
     console.error(err);
     if (err.code === 'P2002') {

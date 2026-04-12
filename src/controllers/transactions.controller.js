@@ -1,5 +1,5 @@
 const prisma = require('../utils/prisma');
-const { fetchPayment, refundPayment } = require('../services/razorpay.service');
+const { refundPayment } = require('../services/payu.service');
 
 // GET /api/v1/transactions
 async function list(req, res) {
@@ -37,17 +37,7 @@ async function get(req, res) {
     },
   });
 
-  // Fetch live Razorpay data if payment ID exists
-  let razorpayData = null;
-  if (payment.razorpayPaymentId) {
-    try {
-      razorpayData = await fetchPayment(payment.razorpayPaymentId);
-    } catch {
-      razorpayData = { error: 'Could not fetch from Razorpay' };
-    }
-  }
-
-  res.json({ ok: true, data: { ...payment, razorpayData } });
+  res.json({ ok: true, data: payment });
 }
 
 // POST /api/v1/transactions/:id/refund
@@ -57,18 +47,18 @@ async function refund(req, res) {
   if (payment.status === 'refunded') {
     return res.status(409).json({ ok: false, message: 'Payment already refunded' });
   }
-  if (!payment.razorpayPaymentId) {
-    return res.status(400).json({ ok: false, message: 'No Razorpay payment ID — cannot refund' });
+  if (!payment.payuMihpayid) {
+    return res.status(400).json({ ok: false, message: 'No PayU payment ID — cannot refund' });
   }
 
-  const rzRefund = await refundPayment(payment.razorpayPaymentId, payment.amount);
+  const refundResult = await refundPayment(payment.payuMihpayid, payment.amount);
 
   await prisma.payment.update({
     where: { id: payment.id },
     data:  { status: 'refunded' },
   });
 
-  res.json({ ok: true, data: rzRefund, message: 'Refund initiated' });
+  res.json({ ok: true, data: refundResult, message: 'Refund initiated' });
 }
 
 module.exports = { list, get, refund };

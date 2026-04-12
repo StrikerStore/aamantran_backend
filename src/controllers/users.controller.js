@@ -2,7 +2,7 @@ const crypto   = require('crypto');
 const bcrypt   = require('bcrypt');
 const prisma   = require('../utils/prisma');
 const { parseGoogleMapsLocation } = require('../utils/mapsParse');
-const { createPaymentLinkOrPlaceholder } = require('../services/razorpay.service');
+const { createPaymentLinkOrPlaceholder } = require('../services/payu.service');
 const { sendBalancePaymentEmail, sendInvitationPublishedEmail } = require('../services/email.service');
 const { addEventMedia, removeEventMedia } = require('../services/eventMedia.service');
 const { normalizeOptionalHttpUrl } = require('../utils/urlNormalize');
@@ -627,7 +627,7 @@ async function updateEventData(req, res) {
 
 // POST /api/v1/users/:id/swap-template
 // Body: { eventId, newTemplateId }
-// If new template is more expensive → create Razorpay payment link, send email
+// If new template is more expensive → create PayU payment link, send email
 // If same or cheaper → swap immediately
 async function swapTemplate(req, res) {
   const { eventId, newTemplateId } = req.body;
@@ -666,7 +666,11 @@ async function swapTemplate(req, res) {
     data:  { status: 'cancelled' },
   });
 
+  const { v4: uuidv4 } = require('uuid');
+  const txnid = uuidv4().replace(/-/g, '').slice(0, 25);
+
   const link = await createPaymentLinkOrPlaceholder({
+    txnid,
     amountPaise:   balance,
     description:   `Balance payment to upgrade invitation template to "${newTemplate.name}"`,
     customerName:  user.username || user.email,
@@ -682,33 +686,33 @@ async function swapTemplate(req, res) {
 
   await prisma.templateSwapRequest.create({
     data: {
-      userId:          user.id,
+      userId:         user.id,
       eventId,
-      fromTemplateId:  event.templateId,
-      toTemplateId:    newTemplateId,
-      balanceAmount:   balance,
-      razorpayLinkId:  link.id,
-      razorpayLinkUrl: link.short_url,
+      fromTemplateId: event.templateId,
+      toTemplateId:   newTemplateId,
+      balanceAmount:  balance,
+      payuLinkId:     link.id,
+      payuLinkUrl:    link.short_url,
     },
   });
 
   await sendBalancePaymentEmail({
-    to:              user.email,
-    name:            user.username || 'there',
-    templateName:    newTemplate.name,
-    balanceAmount:   balance,
-    paymentLink:     link.short_url,
-    isPlaceholder:   link.isPlaceholder,
+    to:            user.email,
+    name:          user.username || 'there',
+    templateName:  newTemplate.name,
+    balanceAmount: balance,
+    paymentLink:   link.short_url,
+    isPlaceholder: link.isPlaceholder,
   });
 
   res.json({
-    ok:                true,
-    status:            'payment_link_sent',
-    paymentLink:       link.short_url,
+    ok:                  true,
+    status:              'payment_link_sent',
+    paymentLink:         link.short_url,
     balance,
     usedPlaceholderLink: link.isPlaceholder,
     message: link.isPlaceholder
-      ? `Email queued for ${user.email} with a placeholder pay link (configure Razorpay + TEMPLATE_SWAP_PLACEHOLDER_PAY_URL for real links). Webhook will apply the template only after a real Razorpay payment.`
+      ? `Email queued for ${user.email} with a placeholder pay link (set PAYU_MERCHANT_KEY + PAYU_MERCHANT_SALT for real links).`
       : `Payment link sent to ${user.email}`,
   });
 }
@@ -775,7 +779,11 @@ async function swapPairedTemplate(req, res) {
     data: { status: 'cancelled' },
   });
 
+  const { v4: uuidv4 } = require('uuid');
+  const txnid = uuidv4().replace(/-/g, '').slice(0, 25);
+
   const link = await createPaymentLinkOrPlaceholder({
+    txnid,
     amountPaise:   balance,
     description:   `Balance payment to upgrade both paired invitations to "${newTemplate.name}"`,
     customerName:  user.username || user.email,
@@ -793,24 +801,24 @@ async function swapPairedTemplate(req, res) {
 
   await prisma.templateSwapRequest.create({
     data: {
-      userId:          user.id,
-      eventId:         full.id,
-      pairedEventId:   subset.id,
-      fromTemplateId:  full.templateId,
-      toTemplateId:    newTemplateId,
-      balanceAmount:   balance,
-      razorpayLinkId:  link.id,
-      razorpayLinkUrl: link.short_url,
+      userId:         user.id,
+      eventId:        full.id,
+      pairedEventId:  subset.id,
+      fromTemplateId: full.templateId,
+      toTemplateId:   newTemplateId,
+      balanceAmount:  balance,
+      payuLinkId:     link.id,
+      payuLinkUrl:    link.short_url,
     },
   });
 
   await sendBalancePaymentEmail({
-    to:              user.email,
-    name:            user.username || 'there',
-    templateName:    newTemplate.name,
-    balanceAmount:   balance,
-    paymentLink:     link.short_url,
-    isPlaceholder:   link.isPlaceholder,
+    to:            user.email,
+    name:          user.username || 'there',
+    templateName:  newTemplate.name,
+    balanceAmount: balance,
+    paymentLink:   link.short_url,
+    isPlaceholder: link.isPlaceholder,
   });
 
   res.json({
@@ -820,7 +828,7 @@ async function swapPairedTemplate(req, res) {
     balance,
     usedPlaceholderLink: link.isPlaceholder,
     message: link.isPlaceholder
-      ? `Email queued for ${user.email} with a placeholder pay link. Configure Razorpay for real checkout; webhook applies the template after payment.`
+      ? `Email queued for ${user.email} with a placeholder pay link (set PAYU_MERCHANT_KEY + PAYU_MERCHANT_SALT for real links).`
       : `Payment link sent to ${user.email} (covers both full and partial invites)`,
   });
 }

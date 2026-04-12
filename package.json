@@ -5,7 +5,7 @@
   "main": "src/server.js",
   "scripts": {
     "postinstall": "prisma generate",
-    "prestart": "npx prisma migrate resolve --rolled-back 20260412094808_add_venue_map_url_dress_code_to_demo_function 2>/dev/null; npx prisma migrate deploy",
+    "prestart": "npx prisma migrate resolve --rolled-back 20260412094808_add_venue_map_url_dress_code_to_demo_function 2>/dev/null; npx prisma migrate resolve --rolled-back 20260412120000_migrate_payment_to_payu 2>/dev/null; npx prisma migrate deploy",
     "start": "node src/server.js",
     "dev": "nodemon src/server.js",
     "db:migrate": "prisma migrate dev",
@@ -30,7 +30,6 @@
     "node-cron": "^4.2.1",
     "nodemailer": "^7.0.5",
     "prisma": "^5.14.0",
-    "razorpay": "^2.9.2",
     "unzipper": "^0.12.3",
     "uuid": "^10.0.0"
   },
