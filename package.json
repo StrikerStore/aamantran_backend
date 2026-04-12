@@ -5,7 +5,7 @@
   "main": "src/server.js",
   "scripts": {
     "postinstall": "prisma generate",
-    "prestart": "npx prisma migrate deploy",
+    "prestart": "npx prisma migrate resolve --rolled-back 20260412094808_add_venue_map_url_dress_code_to_demo_function 2>/dev/null; npx prisma migrate deploy",
     "start": "node src/server.js",
     "dev": "nodemon src/server.js",
     "db:migrate": "prisma migrate dev",
