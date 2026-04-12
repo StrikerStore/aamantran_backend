@@ -61,6 +61,8 @@ async function uploadDirectoryToR2(localDir, keyPrefix) {
       const nextRel = rel ? `${rel}/${ent.name}` : ent.name;
       const nextAbs = path.join(localDir, nextRel);
       if (ent.isDirectory()) {
+        // Never upload a thumbnails/ folder from a ZIP — thumbnails are managed separately
+        if (ent.name === 'thumbnails' && !rel) continue;
         await walk(nextRel);
         continue;
       }
@@ -108,7 +110,11 @@ async function saveThumbnail(filePath, folderName, originalName, variant = 'desk
  */
 async function extractTemplateZip(zipFilePath, folderName) {
   if (storage.useObjectStorage()) {
-    await objectStorage.deleteByPrefix(`templates/${folderName}/`);
+    // Delete all objects in this template's folder EXCEPT thumbnails/
+    await objectStorage.deleteByPrefixExcluding(
+      `templates/${folderName}/`,
+      [`templates/${folderName}/thumbnails/`]
+    );
 
     const tmpRoot = path.join(os.tmpdir(), `aamantran-tpl-${crypto.randomUUID()}`);
     const dest = path.join(tmpRoot, 'extracted');
@@ -138,7 +144,14 @@ async function extractTemplateZip(zipFilePath, folderName) {
   }
 
   const dest = path.join(TEMPLATES_DIR, folderName);
-  if (fs.existsSync(dest)) await fsp.rm(dest, { recursive: true, force: true });
+  if (fs.existsSync(dest)) {
+    // Delete everything except the thumbnails subfolder
+    const entries = await fsp.readdir(dest);
+    for (const entry of entries) {
+      if (entry === 'thumbnails') continue;
+      await fsp.rm(path.join(dest, entry), { recursive: true, force: true });
+    }
+  }
   fs.mkdirSync(dest, { recursive: true });
 
   await fs.createReadStream(zipFilePath).pipe(unzipper.Extract({ path: dest })).promise();

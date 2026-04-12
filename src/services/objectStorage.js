@@ -106,6 +106,38 @@ async function deleteByPrefix(prefix) {
   } while (continuationToken);
 }
 
+/**
+ * Delete every object under `prefix` whose key does NOT start with any of `excludePrefixes`.
+ * Used to wipe a template folder on ZIP re-upload while preserving thumbnails/.
+ */
+async function deleteByPrefixExcluding(prefix, excludePrefixes = []) {
+  const c = getClient();
+  if (!c) return;
+  const bucket = storage.r2BucketName();
+  let continuationToken;
+  do {
+    const listed = await c.send(
+      new ListObjectsV2Command({
+        Bucket: bucket,
+        Prefix: prefix,
+        ContinuationToken: continuationToken,
+      })
+    );
+    const toDelete = (listed.Contents || []).filter(
+      (o) => !excludePrefixes.some((ex) => o.Key.startsWith(ex))
+    );
+    if (toDelete.length) {
+      await c.send(
+        new DeleteObjectsCommand({
+          Bucket: bucket,
+          Delete: { Objects: toDelete.map((o) => ({ Key: o.Key })), Quiet: true },
+        })
+      );
+    }
+    continuationToken = listed.IsTruncated ? listed.NextContinuationToken : undefined;
+  } while (continuationToken);
+}
+
 async function tryDeletePublicUrl(url) {
   const key = storage.publicUrlToObjectKey(url);
   if (!key) return;
@@ -172,6 +204,7 @@ module.exports = {
   getObjectBuffer,
   deleteObjectKey,
   deleteByPrefix,
+  deleteByPrefixExcluding,
   tryDeletePublicUrl,
   ensureBucketCors,
 };
