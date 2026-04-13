@@ -122,6 +122,9 @@ const allowedOrigins = Array.from(
       toOrigin(siteUrls.coupleDashboardUrl()),
       toOrigin(siteUrls.apiBaseUrl()),
       toOrigin(process.env.R2_PUBLIC_BASE_URL),
+      // PayU posts form callbacks (success/failure/swap) from its own domain
+      'https://secure.payu.in',
+      'https://test.payu.in',
       ...localhostOrigins,
     ].filter(Boolean)
   )
