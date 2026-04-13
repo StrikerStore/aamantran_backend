@@ -75,7 +75,11 @@ async function addEventMedia(prisma, { eventId, expectedOwnerId, req }) {
   const slots = getMediaSlots(event.template?.fieldSchema);
   const slotDef = findSlot(slots, slotKey);
 
-  if (slots && slots.length) {
+  if (isWaShare) {
+    const v = assertUrlAllowed(null, url, hasFile);
+    if (!v.ok) return { error: { status: 400, message: v.message } };
+    type = 'photo';
+  } else if (slots && slots.length) {
     if (!slotKey || !slotDef) {
       return {
         error: { status: 400, message: 'slotKey is required and must match this template media sections' },
@@ -99,7 +103,17 @@ async function addEventMedia(prisma, { eventId, expectedOwnerId, req }) {
 
   if (type === 'ganesh') type = 'photo';
 
-  if (slotDef && !slotDef.multiple) {
+  if (isWaShare) {
+    const existing = await prisma.media.findMany({
+      where: { eventId: event.id, slotKey: 'wa_share_image' },
+      select: { id: true, url: true },
+    });
+    await prisma.media.deleteMany({ where: { eventId: event.id, slotKey: 'wa_share_image' } });
+    for (const row of existing) {
+      // NOTE: the URL might be a custom users/ path now, but tryDeletePublicUrl should handle it
+      await objectStorage.tryDeletePublicUrl(row.url);
+    }
+  } else if (slotDef && !slotDef.multiple) {
     const existing = await prisma.media.findMany({
       where: { eventId: event.id, slotKey: slotDef.key },
       select: { id: true, url: true },
