@@ -139,7 +139,7 @@ async function getEvent(req, res) {
   const event = await prisma.event.findUnique({
     where: { id: req.params.id },
     include: {
-      template: { select: { id: true, name: true, slug: true, thumbnailUrl: true, fieldSchema: true, community: true, languages: true } },
+      template: { select: { id: true, name: true, slug: true, thumbnailUrl: true, fieldSchema: true, community: true, languages: true, demoData: true } },
       people:   { orderBy: { sortOrder: 'asc' } },
       venues:   true,
       functions: { include: { venue: true }, orderBy: { sortOrder: 'asc' } },
