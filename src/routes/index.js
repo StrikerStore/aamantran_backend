@@ -25,6 +25,8 @@ router.use('/r2-proxy', r2ProxyRoutes);
 router.use('/', renderRoutes);
 
 
+const globalAssetsRoutes   = require('./globalAssets');
+
 // ── Admin API (JWT-protected inside each router) ─────────────────────
 router.use('/api/v1/auth',         authRoutes);
 router.use('/api/v1/templates',    templateRoutes);
@@ -32,6 +34,8 @@ router.use('/api/v1/users',        userRoutes);
 router.use('/api/v1/transactions', transactionRoutes);
 router.use('/api/v1/tickets',      ticketRoutes);
 router.use('/api/v1/coupons',      couponRoutes);
+router.use('/api/v1/assets',       globalAssetsRoutes);
+router.use('/api/assets',          globalAssetsRoutes); // Public GET access
 
 // ── User Dashboard API (JWT-protected, role: user) ───────────────────
 router.use('/api/user/auth',       userAuthRoutes);

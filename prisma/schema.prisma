@@ -407,3 +407,13 @@ model TicketMessage {
   body       String        @db.Text
   createdAt  DateTime      @default(now())
 }
+
+// ─── GLOBAL ASSETS ────────────────────────────────────────────────────────────
+
+model GlobalAsset {
+  id        String   @id @default(uuid())
+  type      String   // e.g., "bg_music"
+  name      String
+  url       String   @db.VarChar(2048)
+  createdAt DateTime @default(now())
+}
