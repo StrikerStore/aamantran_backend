@@ -503,7 +503,12 @@ async function addPerson(req, res) {
 async function updatePerson(req, res) {
   const event = await prisma.event.findUnique({ where: { id: req.params.id }, select: { id: true, ownerId: true, namesAreFrozen: true } });
   if (!ownerGuard(event, req.user.id)) return res.status(404).json({ ok: false, message: 'Event not found' });
-  if (event.namesAreFrozen) return res.status(403).json({ ok: false, message: 'Names are confirmed. Raise a support ticket to request changes.' });
+  // Allow updates when frozen only if the caller marks the role as optional.
+  // Required names are blocked — the frontend disables those fields.
+  const { required } = req.body || {};
+  if (event.namesAreFrozen && required !== false) {
+    return res.status(403).json({ ok: false, message: 'Names are confirmed. Raise a support ticket to request changes.' });
+  }
 
   const { role, name, photoUrl, extraData, sortOrder } = req.body || {};
   const data = {};
