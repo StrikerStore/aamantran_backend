@@ -58,6 +58,7 @@ router.get('/featured', async (req, res) => {
     select: {
       id: true, rating: true, reviewText: true,
       coupleNames: true, location: true, createdAt: true,
+      couplePhotoUrl: true,
       template: { select: { name: true, slug: true } },
     },
   });
@@ -97,6 +98,7 @@ router.get('/:slug/reviews', async (req, res) => {
     select: {
       id: true, rating: true, reviewText: true,
       coupleNames: true, location: true, createdAt: true,
+      couplePhotoUrl: true,
     },
   });
   res.json(reviews);

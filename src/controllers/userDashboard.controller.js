@@ -915,10 +915,48 @@ async function submitReview(req, res) {
   });
   if (!payment) return res.status(403).json({ ok: false, message: 'You can only review templates you have purchased' });
 
+  // ── Upload couple photo to R2 (optional) ────────────────────────────────────
+  let couplePhotoUrl = null;
+  if (req.file) {
+    try {
+      const storage       = require('../config/storage');
+      const objectStorage = require('../services/objectStorage');
+      const path          = require('path');
+      const { v4: uuidv4} = require('uuid');
+
+      const ext    = path.extname(req.file.originalname || '').toLowerCase() || '.jpg';
+      const key    = `review-images/${uuidv4()}${ext}`;
+      const ct     = storage.contentTypeForPath(req.file.originalname || `file${ext}`);
+
+      if (storage.useObjectStorage()) {
+        await objectStorage.putObject(key, req.file.buffer, ct);
+        couplePhotoUrl = `${storage.objectStoragePublicBase()}/${key}`;
+      }
+      // Local disk mode: skip upload (R2 not configured) — photo URL stays null
+    } catch (uploadErr) {
+      console.error('[Review] Couple photo upload failed:', uploadErr.message);
+      // Non-fatal — proceed without photo
+    }
+  }
+
   const review = await prisma.templateReview.upsert({
     where: { templateId_userId: { templateId, userId: req.user.id } },
-    create: { templateId, userId: req.user.id, rating: Number(rating), reviewText: reviewText || null, coupleNames: coupleNames || null, location: location || null },
-    update: { rating: Number(rating), reviewText: reviewText || null, coupleNames: coupleNames || null, location: location || null },
+    create: {
+      templateId, userId: req.user.id,
+      rating: Number(rating),
+      reviewText:     reviewText     || null,
+      coupleNames:    coupleNames    || null,
+      location:       location       || null,
+      couplePhotoUrl: couplePhotoUrl || null,
+    },
+    update: {
+      rating: Number(rating),
+      reviewText:     reviewText     || null,
+      coupleNames:    coupleNames    || null,
+      location:       location       || null,
+      // Only overwrite photo if a new one was uploaded
+      ...(couplePhotoUrl ? { couplePhotoUrl } : {}),
+    },
   });
 
   // Update template avgRating

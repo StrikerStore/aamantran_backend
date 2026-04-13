@@ -80,16 +80,17 @@ model TemplateDemoFunction {
 }
 
 model TemplateReview {
-  id          String   @id @default(uuid())
-  templateId  String
-  template    Template @relation(fields: [templateId], references: [id], onDelete: Cascade)
-  userId      String
-  user        User     @relation(fields: [userId], references: [id])
-  rating      Int
-  reviewText  String?  @db.Text
-  coupleNames String?
-  location    String?
-  createdAt   DateTime @default(now())
+  id             String   @id @default(uuid())
+  templateId     String
+  template       Template @relation(fields: [templateId], references: [id], onDelete: Cascade)
+  userId         String
+  user           User     @relation(fields: [userId], references: [id])
+  rating         Int
+  reviewText     String?  @db.Text
+  coupleNames    String?
+  location       String?
+  couplePhotoUrl String?  @db.VarChar(2048)
+  createdAt      DateTime @default(now())
 
   @@unique([templateId, userId])
 }
