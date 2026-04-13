@@ -44,10 +44,10 @@ async function addEventMedia(prisma, { eventId, expectedOwnerId, req }) {
       ? String(req.body.slotKey).trim()
       : null;
   let type = req.body && req.body.type ? String(req.body.type) : '';
+  const isWaShare = slotKey === 'wa_share_image';
 
   if (hasFile) {
     // ── WhatsApp share images go to users/{userId}/whatsapp-share-images/ ────
-    const isWaShare = slotKey === 'wa_share_image';
     if (storage.useObjectStorage()) {
       const filename = req.file.filename;
       let key;

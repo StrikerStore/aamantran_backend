@@ -26,7 +26,7 @@ async function runOnboardingReminderJob() {
       isOnboarded: false,
       reminderSentAt: null,
       createdAt: { lte: cutoff },
-      customerEmail: { not: null },
+      customerEmail: { not: '' },
     },
     include: { template: { select: { slug: true, name: true } } },
     take: 200,
@@ -43,7 +43,7 @@ async function runRsvpMilestoneJob() {
   const events = await prisma.event.findMany({
     where: {
       isPublished: true,
-      owner: { email: { not: null } },
+      owner: { email: { not: '' } },
       OR: [{ inviteScope: null }, { inviteScope: 'full' }],
     },
     include: { owner: { select: { email: true } } },
@@ -65,7 +65,7 @@ async function runDateBasedEmailJob() {
   const events = await prisma.event.findMany({
     where: {
       isPublished: true,
-      owner: { email: { not: null } },
+      owner: { email: { not: '' } },
       OR: [{ inviteScope: null }, { inviteScope: 'full' }],
     },
     include: {
