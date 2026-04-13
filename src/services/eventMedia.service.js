@@ -46,14 +46,26 @@ async function addEventMedia(prisma, { eventId, expectedOwnerId, req }) {
   let type = req.body && req.body.type ? String(req.body.type) : '';
 
   if (hasFile) {
+    // ── WhatsApp share images go to users/{userId}/whatsapp-share-images/ ────
+    const isWaShare = slotKey === 'wa_share_image';
     if (storage.useObjectStorage()) {
       const filename = req.file.filename;
-      const key = `uploads/events/${event.id}/${filename}`;
+      let key;
+      if (isWaShare && req.user?.id) {
+        const { v4: uuidv4 } = require('uuid');
+        const ext = require('path').extname(req.file.originalname || filename) || '.jpg';
+        key = `users/${req.user.id}/whatsapp-share-images/${uuidv4()}${ext}`;
+      } else {
+        key = `uploads/events/${event.id}/${filename}`;
+      }
       const buf = await fs.readFile(req.file.path);
       const ct = storage.contentTypeForPath(req.file.originalname || filename);
       await objectStorage.putObject(key, buf, ct);
       await fs.unlink(req.file.path).catch(() => {});
-      url = publicUploadUrl(req, event.id, filename);
+      // Use key-based URL for wa_share (user folder), publicUploadUrl for others
+      url = isWaShare && req.user?.id
+        ? `${storage.objectStoragePublicBase()}/${key}`
+        : publicUploadUrl(req, event.id, filename);
     } else {
       url = publicUploadUrl(req, event.id, req.file.filename);
     }
