@@ -120,7 +120,7 @@ async function markPaymentPaid(payment, mihpayid) {
       templateName: updated.template.name,
       amount: updated.amount,
       onboardingUrl,
-    }).catch(err => console.error('[Email Error] sendPurchaseConfirmationEmail:', err.message));
+    }).catch(err => console.error('[Email Error]', err.message));
   }
 
   return updated;
@@ -442,7 +442,7 @@ router.post('/mock-success', async (req, res) => {
         templateName: payment.template.name,
         amount: payment.amount,
         onboardingUrl,
-      }).catch(() => {});
+      }).catch(err => console.error('[Email Error]', err.message));
     }
 
     return res.json({ ok: true });
@@ -549,7 +549,7 @@ router.post('/register', async (req, res) => {
         to:           existingUser.email,
         username:     existingUser.username,
         dashboardUrl: siteUrls.coupleDashboardUrl(),
-      }).catch(err => console.error('[Email Error] sendOnboardingCompleteEmail:', err.message));
+      }).catch(err => console.error('[Email Error]', err.message));
       return res.json({ ok: true, linked: true, eventCreated: true, dashboardUrl: siteUrls.coupleDashboardUrl() });
     }
 
@@ -590,7 +590,7 @@ router.post('/register', async (req, res) => {
       to:           user.email,
       username:     user.username,
       dashboardUrl: siteUrls.coupleDashboardUrl(),
-    }).catch(err => console.error('[Email Error] sendOnboardingCompleteEmail:', err.message));
+    }).catch(err => console.error('[Email Error]', err.message));
 
     return res.json({ ok: true, linked: false, eventCreated: true, dashboardUrl: siteUrls.coupleDashboardUrl() });
   } catch (err) {

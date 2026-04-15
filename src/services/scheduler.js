@@ -56,7 +56,7 @@ async function runRsvpMilestoneJob() {
     if (!last) continue;
     if ((ev.lastMilestoneNotified || 0) >= last) continue;
     const dashboardUrl = `${siteUrls.coupleDashboardUrl()}/dashboard`;
-    await sendRsvpMilestoneEmail({ to: ev.owner.email, count: last, dashboardUrl }).catch(() => {});
+    await sendRsvpMilestoneEmail({ to: ev.owner.email, count: last, dashboardUrl }).catch(err => console.error('[Email Error] sendRsvpMilestoneEmail:', err.message));
     await prisma.event.update({ where: { id: ev.id }, data: { lastMilestoneNotified: last } });
   }
 }
@@ -86,12 +86,12 @@ async function runDateBasedEmailJob() {
     const dashboardUrl = `${siteUrls.coupleDashboardUrl()}/dashboard`;
 
     if ((daysToEarliest === 7 || daysToEarliest === 1) && ev.countdownEmailSent !== daysToEarliest) {
-      await sendEventCountdownEmail({ to: ev.owner.email, days: daysToEarliest, dashboardUrl }).catch(() => {});
+      await sendEventCountdownEmail({ to: ev.owner.email, days: daysToEarliest, dashboardUrl }).catch(err => console.error('[Email Error] sendEventCountdownEmail:', err.message));
       await prisma.event.update({ where: { id: ev.id }, data: { countdownEmailSent: daysToEarliest } });
     }
 
     if (daysAfterLatest >= 1 && !ev.postEventEmailSent) {
-      await sendPostEventThankYouEmail({ to: ev.owner.email, dashboardUrl }).catch(() => {});
+      await sendPostEventThankYouEmail({ to: ev.owner.email, dashboardUrl }).catch(err => console.error('[Email Error] sendPostEventThankYouEmail:', err.message));
       await prisma.event.update({ where: { id: ev.id }, data: { postEventEmailSent: true } });
     }
   }
