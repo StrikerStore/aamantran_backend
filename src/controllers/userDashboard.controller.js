@@ -287,7 +287,7 @@ async function publishEvent(req, res) {
       const owner = await prisma.user.findUnique({ where: { id: event.ownerId }, select: { email: true } });
       if (owner?.email) {
         const inviteUrl = `${siteUrls.apiBaseUrl()}/i/${mainUpdate.slug || event.slug}`;
-        sendInvitationPublishedEmail({ to: owner.email, inviteUrl }).catch(() => {});
+        sendInvitationPublishedEmail({ to: owner.email, inviteUrl }).catch(err => console.error('[Email Error] sendInvitationPublishedEmail:', err.message));
       }
     }
     return res.json({ ok: true, message: 'Invitation published' });
@@ -386,7 +386,7 @@ async function publishEvent(req, res) {
     const owner = await prisma.user.findUnique({ where: { id: event.ownerId }, select: { email: true } });
     if (owner?.email) {
       const inviteUrl = `${siteUrls.apiBaseUrl()}/i/${mainUpdate.slug || event.slug}`;
-      sendInvitationPublishedEmail({ to: owner.email, inviteUrl }).catch(() => {});
+      sendInvitationPublishedEmail({ to: owner.email, inviteUrl }).catch(err => console.error('[Email Error] sendInvitationPublishedEmail:', err.message));
     }
   }
 

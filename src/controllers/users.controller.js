@@ -480,7 +480,7 @@ async function updateEventData(req, res) {
     });
     if (owner?.email) {
       const inviteUrl = `${siteUrls.apiBaseUrl()}/i/${updated.slug}`;
-      sendInvitationPublishedEmail({ to: owner.email, inviteUrl }).catch(() => {});
+      sendInvitationPublishedEmail({ to: owner.email, inviteUrl }).catch(err => console.error('[Email Error] sendInvitationPublishedEmail:', err.message));
     }
   }
 

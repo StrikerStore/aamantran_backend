@@ -33,7 +33,7 @@ async function runOnboardingReminderJob() {
   });
   for (const p of payments) {
     const onboardingUrl = `${siteUrls.landingUrl()}/onboarding?paymentId=${encodeURIComponent(p.id)}&slug=${encodeURIComponent(p.template.slug)}&template=${encodeURIComponent(p.template.name)}`;
-    await sendOnboardingReminderEmail({ to: p.customerEmail, onboardingUrl }).catch(() => {});
+    await sendOnboardingReminderEmail({ to: p.customerEmail, onboardingUrl }).catch(err => console.error('[Email Error] sendOnboardingReminderEmail:', err.message));
     await prisma.payment.update({ where: { id: p.id }, data: { reminderSentAt: new Date() } });
   }
 }
