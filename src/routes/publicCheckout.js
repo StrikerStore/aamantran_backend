@@ -587,8 +587,8 @@ router.post('/register', async (req, res) => {
       data:  { userId: user.id, eventId: event.id, isOnboarded: true, onboardedAt: new Date() },
     });
     sendOnboardingCompleteEmail({
-      to:           user.email,
-      username:     user.username,
+      to:           emailLower,
+      username:     usernameNorm,
       dashboardUrl: siteUrls.coupleDashboardUrl(),
     }).catch(err => console.error('[Email Error]', err.message));
 
