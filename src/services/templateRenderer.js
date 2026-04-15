@@ -205,6 +205,7 @@ function buildInvitationData(event) {
     // Prefer linked venue over inline fields
     const v = fn.venue;
     return {
+      id:            fn.id,
       name:          fn.name,
       date:          formatDate(fn.date),
       time:          fn.startTime || '',
