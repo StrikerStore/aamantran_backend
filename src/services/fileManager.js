@@ -221,6 +221,13 @@ async function rewriteAssetPaths(dir, assetPrefix) {
 async function walkAndRewrite(baseDir, currentDir, prefix) {
   const entries = await fsp.readdir(currentDir, { withFileTypes: true });
 
+  // When a file is in a subdirectory (e.g. assets/style.css), relative paths
+  // like ./background.jpg refer to files within that subdirectory, not the
+  // template root.  Compute the subdirectory suffix so that ./foo.jpg in
+  // assets/style.css rewrites to {prefix}assets/foo.jpg, not {prefix}foo.jpg.
+  const subDirRel = path.relative(baseDir, currentDir).replace(/\\/g, '/');
+  const filePrefix = subDirRel ? `${prefix}${subDirRel}/` : prefix;
+
   for (const entry of entries) {
     const fullPath = path.join(currentDir, entry.name);
 
@@ -240,11 +247,11 @@ async function walkAndRewrite(baseDir, currentDir, prefix) {
       // match arbitrary minified code like getElementById("root") or e.jsx().
       content = content.replace(
         /(from\s*["'])(\.\.\/|\.\/)([^"'\s]+)(["'])/gi,
-        (_m, pre, _rel, rest, post) => `${pre}${prefix}${rest}${post}`
+        (_m, pre, _rel, rest, post) => `${pre}${filePrefix}${rest}${post}`
       );
       content = content.replace(
         /(import\s*\(\s*["'])(\.\.\/|\.\/)([^"'\s]+)(["']\s*\))/gi,
-        (_m, pre, _rel, rest, post) => `${pre}${prefix}${rest}${post}`
+        (_m, pre, _rel, rest, post) => `${pre}${filePrefix}${rest}${post}`
       );
 
       // ── JS: rewrite root-relative asset paths (/images/foo.jpg, etc.) ──
@@ -261,13 +268,13 @@ async function walkAndRewrite(baseDir, currentDir, prefix) {
       // ── HTML / CSS: rewrite asset references starting with ./ or ../ ──
       content = content.replace(
         /(['"`])(\.\.\/|\.\/)([^'"`\s>]+\.(jpg|jpeg|png|gif|avif|webp|svg|mp4|webm|mp3|ogg|css|js|woff2?|ttf))/gi,
-        (_m, quote, _rel, rest) => `${quote}${prefix}${rest}`
+        (_m, quote, _rel, rest) => `${quote}${filePrefix}${rest}`
       );
       // CSS url() with unquoted paths: url(../images/foo.jpg)
       if (ext === '.css') {
         content = content.replace(
           /url\((\.\.\/|\.\/)([^)]+\.(jpg|jpeg|png|gif|avif|webp|svg|woff2?|ttf))\)/gi,
-          (_m, _rel, rest) => `url(${prefix}${rest})`
+          (_m, _rel, rest) => `url(${filePrefix}${rest})`
         );
       }
     }
