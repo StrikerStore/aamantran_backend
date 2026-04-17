@@ -1,0 +1,7 @@
+-- AlterTable
+ALTER TABLE `TemplateDemoData`
+  ADD COLUMN `instagramUrl` VARCHAR(2048) NULL,
+  ADD COLUMN `socialYoutubeUrl` VARCHAR(2048) NULL,
+  ADD COLUMN `websiteUrl` VARCHAR(2048) NULL,
+  ADD COLUMN `rsvpEnabled` BOOLEAN NOT NULL DEFAULT TRUE,
+  ADD COLUMN `guestNotesEnabled` BOOLEAN NOT NULL DEFAULT TRUE;

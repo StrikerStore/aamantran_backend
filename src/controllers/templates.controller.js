@@ -127,6 +127,11 @@ async function create(req, res) {
             people:       parsedDemo.people     || [],
             customFields: parsedDemo.custom_fields || [],
             mediaSlotDemoUrls: parsedDemo.media_slot_demo_urls || null,
+            instagramUrl:      parsedDemo.instagram_url      || null,
+            socialYoutubeUrl:  parsedDemo.social_youtube_url || null,
+            websiteUrl:        parsedDemo.website_url        || null,
+            rsvpEnabled:       parsedDemo.rsvp_enabled       !== undefined ? Boolean(parsedDemo.rsvp_enabled)       : true,
+            guestNotesEnabled: parsedDemo.guest_notes_enabled !== undefined ? Boolean(parsedDemo.guest_notes_enabled) : true,
             functions: {
               create: (parsedDemo.functions || []).map((fn, i) => ({
                 name:         fn.name,
@@ -276,6 +281,11 @@ async function updateDemoData(req, res) {
       people:           demo.people             || [],
       customFields:     demo.custom_fields      || [],
       mediaSlotDemoUrls: demo.media_slot_demo_urls || null,
+      instagramUrl:      demo.instagram_url      || null,
+      socialYoutubeUrl:  demo.social_youtube_url || null,
+      websiteUrl:        demo.website_url        || null,
+      rsvpEnabled:       demo.rsvp_enabled       !== undefined ? Boolean(demo.rsvp_enabled)       : true,
+      guestNotesEnabled: demo.guest_notes_enabled !== undefined ? Boolean(demo.guest_notes_enabled) : true,
       functions: {
         create: (demo.functions || []).map((fn, i) => ({
           name:         fn.name,

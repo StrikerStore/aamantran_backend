@@ -59,6 +59,12 @@ model TemplateDemoData {
   people       Json?    // [{ role, name, photo_url }] — sample people for demo render
   customFields Json?    // [{ key, value }] — sample custom field values for demo render
   mediaSlotDemoUrls Json? // { slotKey: "https://..." } — demo URLs for media slot preview
+  // Links & guests demo settings
+  instagramUrl      String?  @db.VarChar(2048)
+  socialYoutubeUrl  String?  @db.VarChar(2048)
+  websiteUrl        String?  @db.VarChar(2048)
+  rsvpEnabled       Boolean  @default(true)
+  guestNotesEnabled Boolean  @default(true)
   createdAt    DateTime @default(now())
   updatedAt    DateTime @updatedAt
 
