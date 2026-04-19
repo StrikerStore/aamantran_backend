@@ -265,16 +265,19 @@ async function walkAndRewrite(baseDir, currentDir, prefix) {
         (_m, quote, dir) => `${quote}${prefix}${dir}/`
       );
     } else {
-      // ── HTML / CSS: rewrite asset references starting with ./ or ../ ──
+      // ── HTML / CSS: rewrite asset references (./ ../ or bare relative paths) ──
+      // The optional (\.\.\/|\.\/)? strips a leading ./ or ../ before prepending
+      // filePrefix. The negative lookahead prevents rewriting absolute URLs,
+      // root-relative paths, data URIs, anchors, and Handlebars expressions.
       content = content.replace(
-        /(['"`])(\.\.\/|\.\/)([^'"`\s>]+\.(jpg|jpeg|png|gif|avif|webp|svg|mp4|webm|mp3|ogg|css|js|woff2?|ttf))/gi,
+        /(['"`])(\.\.\/|\.\/)?(?!https?:|\/\/|\/|data:|#|\{\{)([^'"`\s>]+\.(jpg|jpeg|png|gif|avif|webp|svg|mp4|webm|mp3|ogg|css|js|woff2?|ttf|otf|eot))/gi,
         (_m, quote, _rel, rest) => `${quote}${filePrefix}${rest}`
       );
-      // CSS url() with unquoted paths: url(../images/foo.jpg)
+      // CSS url() — handles quoted/unquoted, with or without leading ./ ../
       if (ext === '.css') {
         content = content.replace(
-          /url\((\.\.\/|\.\/)([^)]+\.(jpg|jpeg|png|gif|avif|webp|svg|woff2?|ttf))\)/gi,
-          (_m, _rel, rest) => `url(${filePrefix}${rest})`
+          /url\((['"]?)(\.\.\/|\.\/)?(?!https?:|\/\/|\/|data:)([^'"\s)]+\.(jpg|jpeg|png|gif|avif|webp|svg|woff2?|ttf|otf|eot))\1\)/gi,
+          (_m, quote, _rel, rest) => `url(${quote}${filePrefix}${rest}${quote})`
         );
       }
     }
