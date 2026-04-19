@@ -3,7 +3,7 @@ const bcrypt   = require('bcrypt');
 const prisma   = require('../utils/prisma');
 const { parseGoogleMapsLocation } = require('../utils/mapsParse');
 const { createPaymentLinkOrPlaceholder } = require('../services/payu.service');
-const { sendBalancePaymentEmail, sendInvitationPublishedEmail } = require('../services/email.service');
+const { sendBalancePaymentEmail, sendInvitationPublishedEmail, sendTemplateChangedEmail } = require('../services/email.service');
 const { addEventMedia, removeEventMedia } = require('../services/eventMedia.service');
 const { normalizeOptionalHttpUrl } = require('../utils/urlNormalize');
 const siteUrls = require('../config/siteUrls');
@@ -888,6 +888,90 @@ async function updateProfile(req, res) {
   res.json({ ok: true, data: user });
 }
 
+
+// PATCH /api/v1/users/:id/change-template
+// Body: { eventId, newTemplateId }
+// Admin-only: forcibly changes the template on an event, clearing incompatible data and unpublishing.
+// Keeps:  people (names), functions, venues, language, links & social, rsvp/guestNotes flags
+// Clears: all custom fields, all media (photos + music)
+async function changeTemplate(req, res) {
+  const { eventId, newTemplateId } = req.body;
+  if (!eventId || !newTemplateId) {
+    return res.status(400).json({ ok: false, message: 'eventId and newTemplateId required' });
+  }
+
+  // Load event with current template
+  const event = await prisma.event.findFirst({
+    where:   { id: eventId, ownerId: req.params.id },
+    include: { template: { select: { id: true, name: true } } },
+  });
+  if (!event) return res.status(404).json({ ok: false, message: 'Event not found for this user' });
+
+  // Prevent no-op
+  if (event.templateId === newTemplateId) {
+    return res.status(400).json({ ok: false, message: 'Event already uses this template' });
+  }
+
+  const newTemplate = await prisma.template.findUnique({ where: { id: newTemplateId } });
+  if (!newTemplate) return res.status(404).json({ ok: false, message: 'New template not found' });
+
+  // Load owner email for confirmation mail
+  const owner = await prisma.user.findUnique({
+    where:  { id: event.ownerId },
+    select: { email: true },
+  });
+
+  // Execute all changes atomically
+  await prisma.$transaction(async (tx) => {
+    // 1. Switch template + unpublish the invitation
+    await tx.event.update({
+      where: { id: eventId },
+      data:  { templateId: newTemplateId, isPublished: false },
+    });
+
+    // 2. Wipe all custom fields (template-specific — new theme has different fields)
+    await tx.eventCustomField.deleteMany({ where: { eventId } });
+
+    // 3. Wipe all media (photos + music — new theme's slots differ)
+    await tx.media.deleteMany({ where: { eventId } });
+
+    // 4. Clear pre-rendered HTML cache so stale old-template HTML is never served
+    await tx.eventRenderCache.deleteMany({ where: { eventId } });
+  });
+
+  // Fire confirmation email — non-blocking, don't fail the API call if SMTP is down
+  if (owner?.email) {
+    const dashboardUrl = `${siteUrls.apiBaseUrl().replace('/api', '')}/dashboard`;
+    sendTemplateChangedEmail({
+      to:               owner.email,
+      fromTemplateName: event.template.name,
+      toTemplateName:   newTemplate.name,
+      dashboardUrl,
+    }).catch(err => console.error('[Email Error] sendTemplateChangedEmail:', err.message));
+  }
+
+  // Return updated event so the admin panel can refresh immediately
+  const updated = await prisma.event.findUnique({
+    where:   { id: eventId },
+    include: {
+      template:     { select: { id: true, name: true, slug: true, fieldSchema: true } },
+      functions:    { orderBy: { sortOrder: 'asc' }, include: { venue: true } },
+      people:       { orderBy: { sortOrder: 'asc' } },
+      venues:       true,
+      customFields: true,
+      media:        true,
+    },
+  });
+
+  res.json({
+    ok:      true,
+    message: `Template changed to "${newTemplate.name}". Custom fields, photos and music cleared. Invitation unpublished.`,
+    data:    updated,
+    cleared: { customFields: true, media: true, renderCache: true },
+    kept:    { people: true, functions: true, venues: true, language: true, links: true },
+  });
+}
+
 module.exports = {
   list,
   get,
@@ -901,4 +985,5 @@ module.exports = {
   uploadEventMediaAsAdmin,
   deleteEventMediaAsAdmin,
   getEventPreviewToken,
+  changeTemplate,
 };

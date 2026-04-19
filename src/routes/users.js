@@ -25,6 +25,7 @@ router.delete('/:id/events/:eventId/media/:mediaId', controller.deleteEventMedia
 router.put  ('/:id/event-data',          controller.updateEventData);
 router.post ('/:id/swap-template',       controller.swapTemplate);
 router.post ('/:id/swap-paired-template', controller.swapPairedTemplate);
+router.patch('/:id/change-template',      controller.changeTemplate);
 router.post ('/:id/generate-invites',   controller.generatePairedInvites);
 
 module.exports = router;

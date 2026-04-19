@@ -7,6 +7,7 @@ const {
   rsvpMilestoneHtml,
   eventCountdownHtml,
   postEventThankYouHtml,
+  templateChangedHtml,
 } = require('./emailTemplates');
 
 let _transport = null;
@@ -161,6 +162,18 @@ async function sendPostEventThankYouEmail({ to, dashboardUrl }) {
   });
 }
 
+/**
+ * Sent when admin changes the template on a user's event.
+ * Tells them what was kept, what was cleared, and to go republish.
+ */
+async function sendTemplateChangedEmail({ to, fromTemplateName, toTemplateName, dashboardUrl }) {
+  return sendMail({
+    to,
+    subject: `Your invitation design has been updated — please review and republish`,
+    html: templateChangedHtml({ fromTemplateName, toTemplateName, dashboardUrl }),
+  });
+}
+
 module.exports = {
   sendMail,
   sendBalancePaymentEmail,
@@ -174,4 +187,5 @@ module.exports = {
   sendRsvpMilestoneEmail,
   sendEventCountdownEmail,
   sendPostEventThankYouEmail,
+  sendTemplateChangedEmail,
 };

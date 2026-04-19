@@ -208,6 +208,65 @@ function eventCountdownHtml({ days, dashboardUrl }) {
   });
 }
 
+/**
+ * Email sent when admin changes an event's template.
+ * - fromTemplateName: old template name
+ * - toTemplateName:   new template name
+ * - dashboardUrl:     direct link to user's dashboard
+ * - keptItems:        array of strings — what was preserved
+ * - clearedItems:     array of strings — what was cleared
+ */
+function templateChangedHtml({ fromTemplateName, toTemplateName, dashboardUrl }) {
+  return wrapInLayout(`
+    <p style="margin:0 0 6px;font-size:17px;font-weight:600;color:${BRAND};">Your invitation design has been updated! 🎨</p>
+    <p style="margin:0 0 20px;color:#5a3a3a;">Our team has switched your invitation to a beautiful new design. Your existing details have been carried over wherever possible — a few fields may need your attention before you go live again.</p>
+
+    ${infoCard(`
+      ${infoRow('Previous Design', fromTemplateName)}
+      ${infoRow('New Design', `<span style="color:#2e7d4f;font-weight:700;">${toTemplateName}</span>`)}
+      ${infoRow('Status', '<span style="color:#b45309;background:#fef3c7;padding:2px 10px;border-radius:12px;font-size:12px;">⏸ Unpublished</span>')}
+    `)}
+
+    ${divider()}
+
+    <p style="margin:0 0 8px;font-size:14px;color:#5a3a3a;"><strong>✅ What we kept for you:</strong></p>
+    <ul style="margin:0 0 20px;padding-left:20px;color:#5a3a3a;font-size:14px;line-height:2;">
+      <li>Names (Bride, Groom &amp; family members)</li>
+      <li>Event functions &amp; ceremony details</li>
+      <li>Venues &amp; map links</li>
+      <li>Language preference</li>
+      <li>Social links, RSVP &amp; Guest wishes settings</li>
+    </ul>
+
+    <p style="margin:0 0 8px;font-size:14px;color:#5a3a3a;"><strong>🗑️ What was cleared (new theme needs fresh content):</strong></p>
+    <ul style="margin:0 0 20px;padding-left:20px;color:#5a3a3a;font-size:14px;line-height:2;">
+      <li>Custom text fields (love story, hashtag, special notes, etc.)</li>
+      <li>Photos &amp; couple images</li>
+      <li>Background music</li>
+    </ul>
+
+    ${divider()}
+
+    <p style="margin:0 0 6px;font-size:14px;color:#5a3a3a;"><strong>Next steps to go live again:</strong></p>
+    <ol style="margin:0 0 24px;padding-left:20px;color:#5a3a3a;font-size:14px;line-height:2;">
+      <li>Open your dashboard and review the new theme's fields</li>
+      <li>Upload photos &amp; music that match the new design</li>
+      <li>Fill in any custom details the new theme requires</li>
+      <li>Hit <strong>Publish</strong> when you're happy!</li>
+    </ol>
+
+    <div style="text-align:center;">
+      ${btn('Go to My Dashboard', dashboardUrl)}
+    </div>
+
+    <p style="margin:24px 0 0;font-size:13px;color:#b09080;text-align:center;">Need help? Reach out to us and we'll guide you through the new design.</p>
+  `, {
+    accentEmoji: '🎨',
+    heroTitle: 'New Design, Fresh Start!',
+    heroSubtitle: 'Your invitation has a stunning new look — let\'s fill it in',
+  });
+}
+
 function postEventThankYouHtml({ dashboardUrl }) {
   return wrapInLayout(`
     <p style="margin:0 0 6px;font-size:17px;font-weight:600;color:${BRAND};">What a beautiful day it must have been! 🌸</p>
@@ -237,4 +296,5 @@ module.exports = {
   rsvpMilestoneHtml,
   eventCountdownHtml,
   postEventThankYouHtml,
+  templateChangedHtml,
 };
