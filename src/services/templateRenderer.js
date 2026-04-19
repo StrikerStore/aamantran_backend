@@ -139,9 +139,6 @@ async function renderTemplate(folderName, data, options = {}) {
     preferredFile: options.preferredFile,
     desktopEntryFile: options.desktopEntryFile,
     mobileEntryFile: options.mobileEntryFile,
-    // Per-template cache-bust token: bumped when admin re-uploads a ZIP.
-    // Prevents browsers from serving immutably-cached old JS/CSS to guests.
-    contentVersion: options.contentVersion,
   });
 
   // Compile and render

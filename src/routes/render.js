@@ -7,6 +7,21 @@ const { getAamantranSdkScript } = require('../services/aamantranSdk');
 
 const router = express.Router();
 
+/**
+ * Prevent every layer (browser, CDN, reverse proxy) from caching invite
+ * and demo pages.  Applied to HTML responses and to /r2-proxy/* assets.
+ *
+ * Cache-Control: no-store  — do NOT store the response at all
+ * Pragma: no-cache          — HTTP/1.0 compat
+ * Expires: 0                — mark as already expired (belt-and-suspenders)
+ */
+function setNoCacheHeaders(res) {
+  res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate');
+  res.setHeader('Pragma', 'no-cache');
+  res.setHeader('Expires', '0');
+  res.setHeader('Surrogate-Control', 'no-store'); // Cloudflare / Fastly CDNs
+}
+
 router.get('/sdk/aamantran-sdk.js', (_req, res) => {
   res.type('application/javascript; charset=utf-8');
   res.send(getAamantranSdkScript());
@@ -129,10 +144,9 @@ router.get('/demo/:slug', async (req, res) => {
     preferredFile: variant === 'mobile' ? template.mobileEntryFile : template.desktopEntryFile,
     desktopEntryFile: template.desktopEntryFile,
     mobileEntryFile: template.mobileEntryFile,
-    // Cache-bust token: ties asset URLs to the last ZIP upload timestamp.
-    contentVersion: template.updatedAt ? new Date(template.updatedAt).getTime() : undefined,
   });
 
+  setNoCacheHeaders(res);
   res.setHeader('Content-Type', 'text/html; charset=utf-8');
   res.send(injectDemoBuyBar(html, template.slug));
 });
@@ -178,8 +192,6 @@ router.get('/i/:slug', async (req, res) => {
     preferredFile: variant === 'mobile' ? event.template.mobileEntryFile : event.template.desktopEntryFile,
     desktopEntryFile: event.template.desktopEntryFile,
     mobileEntryFile: event.template.mobileEntryFile,
-    // Cache-bust token: changes whenever admin re-uploads the template ZIP.
-    contentVersion: event.template.updatedAt ? new Date(event.template.updatedAt).getTime() : undefined,
     aamantranContext: {
       eventSlug: event.slug,
       apiBase,
@@ -190,6 +202,7 @@ router.get('/i/:slug', async (req, res) => {
     },
   });
 
+  setNoCacheHeaders(res);
   res.setHeader('Content-Type', 'text/html; charset=utf-8');
   res.send(html);
 });
@@ -226,10 +239,9 @@ router.get('/i/:slug/preview', async (req, res) => {
     preferredFile: variant === 'mobile' ? event.template.mobileEntryFile : event.template.desktopEntryFile,
     desktopEntryFile: event.template.desktopEntryFile,
     mobileEntryFile: event.template.mobileEntryFile,
-    // Cache-bust token: changes whenever admin re-uploads the template ZIP.
-    contentVersion: event.template.updatedAt ? new Date(event.template.updatedAt).getTime() : undefined,
   });
 
+  setNoCacheHeaders(res);
   res.setHeader('Content-Type', 'text/html; charset=utf-8');
   res.send(html);
 });

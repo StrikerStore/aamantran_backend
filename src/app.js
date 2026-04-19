@@ -148,7 +148,18 @@ app.use(express.urlencoded({ extended: true }));
 // ── STATIC: local disk only (R2 serves templates + media via public URL) ───
 const storagePath = path.resolve(process.env.STORAGE_PATH || './storage');
 if (!storage.useObjectStorage()) {
-  app.use('/s', express.static(path.join(storagePath, 'templates')));
+  // Serve template files with no caching so local dev always picks up
+  // changes immediately when admin re-uploads a ZIP.
+  app.use('/s', express.static(path.join(storagePath, 'templates'), {
+    maxAge: 0,
+    etag: false,
+    lastModified: false,
+    setHeaders(res) {
+      res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate');
+      res.setHeader('Pragma', 'no-cache');
+      res.setHeader('Expires', '0');
+    },
+  }));
 }
 
 const uploadsPath = path.resolve('./uploads');

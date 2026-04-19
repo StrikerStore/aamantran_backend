@@ -18,29 +18,19 @@ const objectStorage = require('./objectStorage');
  *     must resolve against the proxy origin so `/r2-proxy/` middleware can
  *     intercept them.
  *
- * @param {string} html          - raw HTML from R2
- * @param {string|number} version - per-template cache-bust token (e.g. template.updatedAt ms).
- *   Appended as ?v=N to JS/CSS/font src/href so the browser discards
- *   cached assets whenever a new ZIP is uploaded for this template.
+ * No cache-busting query strings are injected here.  All template pages
+ * (HTML, sub-resources) are served with Cache-Control: no-store so the
+ * browser never caches anything — making ?v= tokens unnecessary.
  */
-function rewriteR2AssetsToProxy(html, version) {
+function rewriteR2AssetsToProxy(html) {
   if (!storage.useObjectStorage()) return html;
   const r2Base   = storage.objectStoragePublicBase(); // e.g. https://media.aamantran.online
   const siteUrls = require('../config/siteUrls');
   const apiBase  = siteUrls.apiBaseUrl();             // e.g. https://api.aamantran.online
   const proxyBase = `${apiBase}/r2-proxy`;
 
-  // 1. Replace all CDN base URLs with proxy base URLs
-  let result = html.split(r2Base).join(proxyBase);
-
-  // 2. Append per-template cache-bust version to JS/CSS/font asset URLs.
-  //    Falls back to server start-time if no version supplied (legacy path).
-  const v = version != null ? version : Date.now();
-  result = result.replace(
-    /((?:src|href)\s*=\s*["'])([^"']*\/r2-proxy\/[^"']+\.(js|css|woff2?|ttf))(["'])/gi,
-    (_m, pre, url, _ext, post) => `${pre}${url}?v=${v}${post}`
-  );
-  return result;
+  // Replace all CDN base URLs with proxy base URLs
+  return html.split(r2Base).join(proxyBase);
 }
 
 const STORAGE_PATH = path.resolve(process.env.STORAGE_PATH || './storage');
@@ -321,9 +311,8 @@ async function readTemplateHtml(folderName, options = {}) {
       try {
         const buf = await objectStorage.getObjectBuffer(key);
         // Rewrite direct R2 URLs → /r2-proxy/* so assets load same-origin.
-        // Pass the per-template contentVersion so the browser busts its cache
-        // when admin re-uploads a new ZIP (works across server restarts).
-        return rewriteR2AssetsToProxy(buf.toString('utf8'), options.contentVersion);
+        // No ?v= injected — Cache-Control: no-store headers handle freshness.
+        return rewriteR2AssetsToProxy(buf.toString('utf8'));
       } catch (err) {
         const code = err?.name || err?.Code || err?.code;
         const status = err?.$metadata?.httpStatusCode;

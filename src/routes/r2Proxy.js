@@ -59,8 +59,13 @@ router.get('/*', async (req, res) => {
     res.setHeader('Content-Type', ct);
     res.setHeader('Access-Control-Allow-Origin', '*');
     res.setHeader('Cross-Origin-Resource-Policy', 'cross-origin');
-    // Immutable cache — hashed filenames, safe to cache forever in the browser
-    res.setHeader('Cache-Control', 'public, max-age=31536000, immutable');
+    // Never cache template assets — the same key (e.g. index.js) is
+    // overwritten in R2 each time admin uploads a new template ZIP.
+    // Using immutable/max-age would serve stale JS/CSS to users indefinitely.
+    res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate');
+    res.setHeader('Pragma', 'no-cache');
+    res.setHeader('Expires', '0');
+    res.setHeader('Surrogate-Control', 'no-store');
     res.send(body);
   } catch (err) {
     const code   = err?.name || err?.Code || err?.code;
