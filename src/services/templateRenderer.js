@@ -139,6 +139,9 @@ async function renderTemplate(folderName, data, options = {}) {
     preferredFile: options.preferredFile,
     desktopEntryFile: options.desktopEntryFile,
     mobileEntryFile: options.mobileEntryFile,
+    // Per-template cache-bust token: bumped when admin re-uploads a ZIP.
+    // Prevents browsers from serving immutably-cached old JS/CSS to guests.
+    contentVersion: options.contentVersion,
   });
 
   // Compile and render
@@ -235,15 +238,14 @@ function buildInvitationData(event) {
     .filter(m => m.type === 'photo' && m.slotKey !== 'ganesh')
     .map(m => ({ url: m.url, caption: m.caption || '' }));
 
-  const musicUrl = sortedMedia.find(m => m.type === 'music')?.url || '';
+  const musicUrl = (
+    sortedMedia.find(m => m.type === 'music') ||
+    sortedMedia.find(m => m.slotKey === 'background_music') ||
+    sortedMedia.find(m => m.slotKey === 'music')
+  )?.url || '';
 
-  const ganeshFromSlot = sortedMedia.find(m => m.slotKey === 'ganesh')?.url;
-  const ganeshImageUrl =
-    custom.ganesh_image_url ||
-    ganeshFromSlot ||
-    sortedMedia.find(m => m.type === 'ganesh')?.url ||
-    photos[0]?.url ||
-    '';
+  // Ganesh image is always the static asset bundled with the template.
+  const ganeshImageUrl = '';
 
   const mediaSlotFlat = {};
   for (const [k, arr] of Object.entries(media_slots)) {
@@ -389,8 +391,9 @@ function buildDemoData(demoData) {
         time:          fn.time,
         venue_name:    fn.venueName,
         venue_address: fn.venueAddress || '',
-        dress_code:    '',
-        notes:         '',
+        venue_map_url: fn.venueMapUrl  || '',
+        dress_code:    fn.dressCode    || '',
+        notes:         fn.notes        || '',
       })),
     photos:    (() => {
       // Primary: explicit photoUrls array (legacy field)
@@ -402,8 +405,10 @@ function buildDemoData(demoData) {
       const slotUrls    = Array.isArray(slotPhotos) ? slotPhotos : (slotPhotos ? [slotPhotos] : []);
       return slotUrls.filter(Boolean).map(u => ({ url: String(u), caption: '' }));
     })(),
-    music_url: demoData.musicUrl || '',
-    ganesh_image_url: custom.ganesh_image_url || (demoData.photoUrls || [])[0] || '',
+    music_url: demoData.musicUrl ||
+               (demoData.mediaSlotDemoUrls?.background_music?.[0]) ||
+               (demoData.mediaSlotDemoUrls?.music?.[0]) || '',
+    ganesh_image_url: '',
 
     // Media slots from demo URLs — builds same structure as live invitations
     media_slots: buildDemoMediaSlots(demoData.mediaSlotDemoUrls),

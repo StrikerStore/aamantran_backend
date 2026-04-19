@@ -129,6 +129,8 @@ router.get('/demo/:slug', async (req, res) => {
     preferredFile: variant === 'mobile' ? template.mobileEntryFile : template.desktopEntryFile,
     desktopEntryFile: template.desktopEntryFile,
     mobileEntryFile: template.mobileEntryFile,
+    // Cache-bust token: ties asset URLs to the last ZIP upload timestamp.
+    contentVersion: template.updatedAt ? new Date(template.updatedAt).getTime() : undefined,
   });
 
   res.setHeader('Content-Type', 'text/html; charset=utf-8');
@@ -176,6 +178,8 @@ router.get('/i/:slug', async (req, res) => {
     preferredFile: variant === 'mobile' ? event.template.mobileEntryFile : event.template.desktopEntryFile,
     desktopEntryFile: event.template.desktopEntryFile,
     mobileEntryFile: event.template.mobileEntryFile,
+    // Cache-bust token: changes whenever admin re-uploads the template ZIP.
+    contentVersion: event.template.updatedAt ? new Date(event.template.updatedAt).getTime() : undefined,
     aamantranContext: {
       eventSlug: event.slug,
       apiBase,
@@ -222,6 +226,8 @@ router.get('/i/:slug/preview', async (req, res) => {
     preferredFile: variant === 'mobile' ? event.template.mobileEntryFile : event.template.desktopEntryFile,
     desktopEntryFile: event.template.desktopEntryFile,
     mobileEntryFile: event.template.mobileEntryFile,
+    // Cache-bust token: changes whenever admin re-uploads the template ZIP.
+    contentVersion: event.template.updatedAt ? new Date(event.template.updatedAt).getTime() : undefined,
   });
 
   res.setHeader('Content-Type', 'text/html; charset=utf-8');

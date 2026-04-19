@@ -10,12 +10,6 @@ const objectStorage = require('./objectStorage');
 // ── R2 URL rewriter ───────────────────────────────────────────────────────────
 
 /**
- * Cache-bust version appended to r2-proxy asset URLs.
- * Bump this when stale/corrupted assets are cached on the CDN with immutable headers.
- */
-const R2_PROXY_CACHE_VERSION = Date.now();
-
-/**
  * Replace direct R2 public CDN URLs in template HTML with same-origin
  * API-side proxy paths.  This is necessary because:
  *  1. CSS `<link crossorigin>` tags need CORS headers that R2's Cloudflare
@@ -24,10 +18,12 @@ const R2_PROXY_CACHE_VERSION = Date.now();
  *     must resolve against the proxy origin so `/r2-proxy/` middleware can
  *     intercept them.
  *
- * Appends ?v=N to JS/CSS URLs to force browser cache invalidation after
- * a corrupted-asset fix.
+ * @param {string} html          - raw HTML from R2
+ * @param {string|number} version - per-template cache-bust token (e.g. template.updatedAt ms).
+ *   Appended as ?v=N to JS/CSS/font src/href so the browser discards
+ *   cached assets whenever a new ZIP is uploaded for this template.
  */
-function rewriteR2AssetsToProxy(html) {
+function rewriteR2AssetsToProxy(html, version) {
   if (!storage.useObjectStorage()) return html;
   const r2Base   = storage.objectStoragePublicBase(); // e.g. https://media.aamantran.online
   const siteUrls = require('../config/siteUrls');
@@ -37,10 +33,12 @@ function rewriteR2AssetsToProxy(html) {
   // 1. Replace all CDN base URLs with proxy base URLs
   let result = html.split(r2Base).join(proxyBase);
 
-  // 2. Append cache-bust version to JS/CSS asset URLs in src/href attributes
+  // 2. Append per-template cache-bust version to JS/CSS/font asset URLs.
+  //    Falls back to server start-time if no version supplied (legacy path).
+  const v = version != null ? version : Date.now();
   result = result.replace(
     /((?:src|href)\s*=\s*["'])([^"']*\/r2-proxy\/[^"']+\.(js|css|woff2?|ttf))(["'])/gi,
-    (_m, pre, url, _ext, post) => `${pre}${url}?v=${R2_PROXY_CACHE_VERSION}${post}`
+    (_m, pre, url, _ext, post) => `${pre}${url}?v=${v}${post}`
   );
   return result;
 }
@@ -322,8 +320,10 @@ async function readTemplateHtml(folderName, options = {}) {
       const key = `templates/${folderName}/${fileName}`;
       try {
         const buf = await objectStorage.getObjectBuffer(key);
-        // Rewrite direct R2 URLs → /r2-proxy/* so assets load same-origin
-        return rewriteR2AssetsToProxy(buf.toString('utf8'));
+        // Rewrite direct R2 URLs → /r2-proxy/* so assets load same-origin.
+        // Pass the per-template contentVersion so the browser busts its cache
+        // when admin re-uploads a new ZIP (works across server restarts).
+        return rewriteR2AssetsToProxy(buf.toString('utf8'), options.contentVersion);
       } catch (err) {
         const code = err?.name || err?.Code || err?.code;
         const status = err?.$metadata?.httpStatusCode;
