@@ -15,8 +15,23 @@
 const express       = require('express');
 const storage       = require('../config/storage');
 const objectStorage = require('../services/objectStorage');
+const siteUrls      = require('../config/siteUrls');
 
 const router = express.Router();
+
+// Content-types whose body contains asset URLs we must rewrite so nested
+// resources (fonts loaded from CSS url(), images loaded from JS bundles)
+// stay same-origin and don't trip CSP font-src / connect-src directives.
+const REWRITABLE_CT = /^text\/css|^application\/javascript/i;
+
+function rewriteAssetOriginsInBody(buf, ct) {
+  if (!REWRITABLE_CT.test(ct)) return buf;
+  const r2Base = storage.objectStoragePublicBase();
+  if (!r2Base) return buf;
+  const proxyBase = `${siteUrls.apiBaseUrl()}/r2-proxy`;
+  const text = buf.toString('utf8').split(r2Base).join(proxyBase);
+  return Buffer.from(text, 'utf8');
+}
 
 // Handle OPTIONS preflight explicitly (belt-and-suspenders)
 router.options('/*', (_req, res) => {
@@ -39,13 +54,14 @@ router.get('/*', async (req, res) => {
   try {
     const buf = await objectStorage.getObjectBuffer(key);
     const ct  = storage.contentTypeForPath(key);
+    const body = rewriteAssetOriginsInBody(buf, ct);
 
     res.setHeader('Content-Type', ct);
     res.setHeader('Access-Control-Allow-Origin', '*');
     res.setHeader('Cross-Origin-Resource-Policy', 'cross-origin');
     // Immutable cache — hashed filenames, safe to cache forever in the browser
     res.setHeader('Cache-Control', 'public, max-age=31536000, immutable');
-    res.send(buf);
+    res.send(body);
   } catch (err) {
     const code   = err?.name || err?.Code || err?.code;
     const status = err?.$metadata?.httpStatusCode;

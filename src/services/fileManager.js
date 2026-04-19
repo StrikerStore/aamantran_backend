@@ -13,7 +13,7 @@ const objectStorage = require('./objectStorage');
  * Cache-bust version appended to r2-proxy asset URLs.
  * Bump this when stale/corrupted assets are cached on the CDN with immutable headers.
  */
-const R2_PROXY_CACHE_VERSION = 3;
+const R2_PROXY_CACHE_VERSION = Date.now();
 
 /**
  * Replace direct R2 public CDN URLs in template HTML with same-origin
@@ -278,6 +278,14 @@ async function walkAndRewrite(baseDir, currentDir, prefix) {
         content = content.replace(
           /url\((['"]?)(\.\.\/|\.\/)?(?!https?:|\/\/|\/|data:)([^'"\s)]+\.(jpg|jpeg|png|gif|avif|webp|svg|woff2?|ttf|otf|eot))\1\)/gi,
           (_m, quote, _rel, rest) => `url(${quote}${filePrefix}${rest}${quote})`
+        );
+      }
+      // Handlebars {{else}} fallback paths — e.g. {{else}}./assets/img.png{{/if}}
+      // These are not preceded by a quote so the main regex misses them.
+      if (ext === '.html') {
+        content = content.replace(
+          /(\{\{else\}\})(\.\.\/|\.\/)?(?!https?:|\/\/|\/|data:|\{\{)([^'"`\s{]+\.(jpg|jpeg|png|gif|avif|webp|svg|mp4|webm|mp3|ogg|woff2?|ttf|otf|eot))/gi,
+          (_m, before, _rel, rest) => `${before}${filePrefix}${rest}`
         );
       }
     }

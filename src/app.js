@@ -51,7 +51,7 @@ app.use(
           ...(r2PublicBase ? [r2PublicBase] : []),
         ],
         imgSrc:     ["'self'", "data:", "blob:", "https:"],
-        fontSrc:    ["'self'", "https://fonts.gstatic.com", "data:"],
+        fontSrc:    ["'self'", "https://fonts.gstatic.com", "data:", ...(r2PublicBase ? [r2PublicBase] : [])],
         connectSrc: ["'self'", "https:"],
         mediaSrc:   ["'self'", "https:", "blob:"],
         // PayU payment page + YouTube/Vimeo embeds from demo/custom field URLs in templates
