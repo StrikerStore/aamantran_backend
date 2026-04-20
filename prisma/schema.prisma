@@ -37,11 +37,40 @@ model Template {
   updatedAt     DateTime @updatedAt
 
   fieldSchema   Json?             // { people, customFields, mediaSlots?, functionFields } — drives the invitation form
+
+  // ── Versioning ──
+  // draft folder (templates/{folderPath}/draft/) is mutable — used by /demo and overwritten on every ZIP re-upload.
+  // Published snapshots live at templates/{folderPath}/v{n}/ and are pinned per Event for render stability.
+  currentVersionId String?
+  currentVersion   TemplateVersion? @relation("CurrentVersion", fields: [currentVersionId], references: [id], onDelete: SetNull)
+
   demoData      TemplateDemoData?
   events        Event[]
   payments      Payment[]
   reviews       TemplateReview[]
   swapRequests  TemplateSwapRequest[]
+  versions      TemplateVersion[]  @relation("TemplateVersions")
+}
+
+// Immutable snapshot of a template's files taken on publish / publish-changes.
+// Events pin one of these at creation time so later template edits don't change
+// what an existing couple's invitation renders as.
+model TemplateVersion {
+  id               String   @id @default(uuid())
+  templateId       String
+  template         Template @relation("TemplateVersions", fields: [templateId], references: [id], onDelete: Cascade)
+  versionNumber    Int
+  folderPath       String   // e.g. "floral-design-14463/v1"
+  desktopEntryFile String?
+  mobileEntryFile  String?
+  fieldSchema      Json?    // snapshot of Template.fieldSchema at publish time
+  createdAt        DateTime @default(now())
+
+  currentForTemplates Template[] @relation("CurrentVersion")
+  events              Event[]    @relation("EventTemplateVersion")
+
+  @@unique([templateId, versionNumber])
+  @@index([templateId])
 }
 
 model TemplateDemoData {
@@ -153,6 +182,9 @@ model Event {
   owner        User      @relation(fields: [ownerId], references: [id])
   templateId   String
   template     Template  @relation(fields: [templateId], references: [id])
+  // Pinned template version for render stability. Null only during backfill.
+  templateVersionId String?
+  templateVersion   TemplateVersion? @relation("EventTemplateVersion", fields: [templateVersionId], references: [id], onDelete: SetNull)
   community    String
   eventType    String
   brideName    String?

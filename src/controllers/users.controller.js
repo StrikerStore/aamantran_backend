@@ -239,6 +239,7 @@ async function generatePairedInvites(req, res) {
           slug:         slugFull,
           ownerId:      userId,
           templateId:   resolvedTemplateId,
+          templateVersionId: tpl.currentVersionId || null,
           community,
           eventType,
           brideName:    brideName || null,
@@ -254,6 +255,7 @@ async function generatePairedInvites(req, res) {
           slug:         slugSubset,
           ownerId:      userId,
           templateId:   resolvedTemplateId,
+          templateVersionId: tpl.currentVersionId || null,
           community,
           eventType,
           brideName:    brideName || null,
@@ -654,7 +656,10 @@ async function swapTemplate(req, res) {
   if (balance <= 0) {
     await prisma.event.update({
       where: { id: eventId },
-      data:  { templateId: newTemplateId },
+      data:  {
+        templateId:        newTemplateId,
+        templateVersionId: newTemplate.currentVersionId || null,
+      },
     });
     await prisma.eventRenderCache.deleteMany({ where: { eventId } });
     return res.json({ ok: true, status: 'swapped', message: 'Template swapped immediately (no charge)' });
@@ -755,9 +760,13 @@ async function swapPairedTemplate(req, res) {
   const balance  = newPrice - oldPrice;
 
   if (balance <= 0) {
+    const pinData = {
+      templateId:        newTemplateId,
+      templateVersionId: newTemplate.currentVersionId || null,
+    };
     await prisma.$transaction([
-      prisma.event.update({ where: { id: full.id }, data: { templateId: newTemplateId } }),
-      prisma.event.update({ where: { id: subset.id }, data: { templateId: newTemplateId } }),
+      prisma.event.update({ where: { id: full.id },   data: pinData }),
+      prisma.event.update({ where: { id: subset.id }, data: pinData }),
     ]);
     await prisma.eventRenderCache.deleteMany({
       where: { eventId: { in: [full.id, subset.id] } },
@@ -926,7 +935,11 @@ async function changeTemplate(req, res) {
     // 1. Switch template + unpublish the invitation
     await tx.event.update({
       where: { id: eventId },
-      data:  { templateId: newTemplateId, isPublished: false },
+      data:  {
+        templateId:        newTemplateId,
+        templateVersionId: newTemplate.currentVersionId || null,
+        isPublished:       false,
+      },
     });
 
     // 2. Wipe all custom fields (template-specific — new theme has different fields)

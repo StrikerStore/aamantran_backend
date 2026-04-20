@@ -371,16 +371,19 @@ router.post('/payu-swap-success', async (req, res) => {
       return res.redirect(`${siteUrls.coupleDashboardUrl()}/?payment=already_processed`);
     }
 
-    // Apply the template swap to the event(s)
-    await prisma.event.update({
-      where: { id: swap.eventId },
-      data:  { templateId: swap.toTemplateId },
+    // Apply the template swap to the event(s) — pin the version so the invite
+    // renders against a frozen snapshot even if the new template gets re-published.
+    const toTemplate = await prisma.template.findUnique({
+      where:  { id: swap.toTemplateId },
+      select: { currentVersionId: true },
     });
+    const swapData = {
+      templateId:        swap.toTemplateId,
+      templateVersionId: toTemplate?.currentVersionId || null,
+    };
+    await prisma.event.update({ where: { id: swap.eventId }, data: swapData });
     if (swap.pairedEventId) {
-      await prisma.event.update({
-        where: { id: swap.pairedEventId },
-        data:  { templateId: swap.toTemplateId },
-      });
+      await prisma.event.update({ where: { id: swap.pairedEventId }, data: swapData });
     }
 
     await prisma.templateSwapRequest.update({
@@ -535,6 +538,7 @@ router.post('/register', async (req, res) => {
           slug:       eventSlug,
           ownerId:    existingUser.id,
           templateId: payment.templateId,
+          templateVersionId: payment.template.currentVersionId || null,
           community:  payment.template.community || 'universal',
           eventType,
           language:   'en',
@@ -575,6 +579,7 @@ router.post('/register', async (req, res) => {
         slug:       eventSlug,
         ownerId:    user.id,
         templateId: payment.templateId,
+        templateVersionId: payment.template.currentVersionId || null,
         community:  payment.template.community || 'universal',
         eventType,
         language:   'en',

@@ -6,6 +6,7 @@ const {
   ListObjectsV2Command,
   DeleteObjectsCommand,
   PutBucketCorsCommand,
+  CopyObjectCommand,
 } = require('@aws-sdk/client-s3');
 const storage = require('../config/storage');
 
@@ -138,6 +139,48 @@ async function deleteByPrefixExcluding(prefix, excludePrefixes = []) {
   } while (continuationToken);
 }
 
+/**
+ * List all keys under a prefix (follows pagination).
+ */
+async function listKeys(prefix) {
+  const c = getClient();
+  if (!c) return [];
+  const bucket = storage.r2BucketName();
+  const out = [];
+  let continuationToken;
+  do {
+    const listed = await c.send(
+      new ListObjectsV2Command({
+        Bucket: bucket,
+        Prefix: prefix,
+        ContinuationToken: continuationToken,
+      })
+    );
+    for (const o of listed.Contents || []) out.push(o.Key);
+    continuationToken = listed.IsTruncated ? listed.NextContinuationToken : undefined;
+  } while (continuationToken);
+  return out;
+}
+
+/**
+ * Server-side copy (R2 honours S3 CopyObject). Used to snapshot a draft folder
+ * into an immutable version folder without re-uploading bytes.
+ * Note: object bodies are NOT rewritten — callers must either re-extract the
+ * zip or rewrite asset paths themselves if the prefix changes.
+ */
+async function copyObject(srcKey, destKey) {
+  const c = getClient();
+  if (!c) throw new Error('Object storage is not configured');
+  const bucket = storage.r2BucketName();
+  await c.send(
+    new CopyObjectCommand({
+      Bucket: bucket,
+      Key: destKey,
+      CopySource: `/${bucket}/${encodeURIComponent(srcKey).replace(/%2F/g, '/')}`,
+    })
+  );
+}
+
 async function tryDeletePublicUrl(url) {
   const key = storage.publicUrlToObjectKey(url);
   if (!key) return;
@@ -205,6 +248,8 @@ module.exports = {
   deleteObjectKey,
   deleteByPrefix,
   deleteByPrefixExcluding,
+  listKeys,
+  copyObject,
   tryDeletePublicUrl,
   ensureBucketCors,
 };

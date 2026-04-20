@@ -86,7 +86,7 @@ async function createEvent(req, res) {
 
   const payment = await prisma.payment.findUnique({
     where: { id: paymentId },
-    include: { template: { select: { id: true, fieldSchema: true } } },
+    include: { template: { select: { id: true, fieldSchema: true, currentVersionId: true } } },
   });
   if (!payment || payment.status !== 'paid') {
     return res.status(400).json({ ok: false, message: 'Payment not completed' });
@@ -108,6 +108,7 @@ async function createEvent(req, res) {
       slug,
       ownerId: req.user.id,
       templateId: payment.templateId,
+      templateVersionId: payment.template.currentVersionId || null,
       community,
       eventType,
       language: 'en',
@@ -316,6 +317,8 @@ async function publishEvent(req, res) {
           slug:         pSlug,
           ownerId:      event.ownerId,
           templateId:   event.templateId,
+          // Clone pinned version so the partial invite renders identically to the full one
+          templateVersionId: event.templateVersionId,
           community:    event.community,
           eventType:    event.eventType,
           language:     event.language,

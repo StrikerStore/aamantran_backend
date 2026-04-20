@@ -139,7 +139,9 @@ router.get('/demo/:slug', async (req, res) => {
 
   const data = buildDemoData(template.demoData);
   const variant = detectVariant(req);
-  const html = await renderTemplate(template.folderPath, data, {
+  // Demo always renders the latest draft so admins see their in-progress edits
+  // immediately. Published versions are only used by live invites.
+  const html = await renderTemplate(`${template.folderPath}/draft`, data, {
     variant,
     preferredFile: variant === 'mobile' ? template.mobileEntryFile : template.desktopEntryFile,
     desktopEntryFile: template.desktopEntryFile,
@@ -156,7 +158,8 @@ router.get('/i/:slug', async (req, res) => {
   const event = await prisma.event.findUnique({
     where:   { slug: req.params.slug },
     include: {
-      template:     true,
+      template:        true,
+      templateVersion: true,
       functions:    { orderBy: { sortOrder: 'asc' }, include: { venue: true } },
       people:       { orderBy: { sortOrder: 'asc' } },
       venues:       true,
@@ -187,11 +190,25 @@ router.get('/i/:slug', async (req, res) => {
   }));
   // Build photos list for window.__AAMANTRAN__.photos from all photo-type media
   const sdkPhotos = (data.photos || []);
-  const html = await renderTemplate(event.template.folderPath, data, {
+  // Each invitation renders against the version it was pinned to at creation —
+  // this keeps layout stable even after the template is re-published. The
+  // fallback (draft) only triggers for legacy events whose backfill did not run.
+  const renderSource = event.templateVersion
+    ? {
+        folderPath:       event.templateVersion.folderPath,
+        desktopEntryFile: event.templateVersion.desktopEntryFile,
+        mobileEntryFile:  event.templateVersion.mobileEntryFile,
+      }
+    : {
+        folderPath:       `${event.template.folderPath}/draft`,
+        desktopEntryFile: event.template.desktopEntryFile,
+        mobileEntryFile:  event.template.mobileEntryFile,
+      };
+  const html = await renderTemplate(renderSource.folderPath, data, {
     variant,
-    preferredFile: variant === 'mobile' ? event.template.mobileEntryFile : event.template.desktopEntryFile,
-    desktopEntryFile: event.template.desktopEntryFile,
-    mobileEntryFile: event.template.mobileEntryFile,
+    preferredFile: variant === 'mobile' ? renderSource.mobileEntryFile : renderSource.desktopEntryFile,
+    desktopEntryFile: renderSource.desktopEntryFile,
+    mobileEntryFile:  renderSource.mobileEntryFile,
     aamantranContext: {
       eventSlug: event.slug,
       apiBase,
@@ -212,7 +229,8 @@ router.get('/i/:slug/preview', async (req, res) => {
   const event = await prisma.event.findUnique({
     where:   { slug: req.params.slug },
     include: {
-      template:     true,
+      template:        true,
+      templateVersion: true,
       functions:    { orderBy: { sortOrder: 'asc' }, include: { venue: true } },
       people:       { orderBy: { sortOrder: 'asc' } },
       venues:       true,
@@ -234,11 +252,22 @@ router.get('/i/:slug/preview', async (req, res) => {
 
   const data = buildInvitationData(event);
   const variant = detectVariant(req);
-  const html = await renderTemplate(event.template.folderPath, data, {
+  const renderSource = event.templateVersion
+    ? {
+        folderPath:       event.templateVersion.folderPath,
+        desktopEntryFile: event.templateVersion.desktopEntryFile,
+        mobileEntryFile:  event.templateVersion.mobileEntryFile,
+      }
+    : {
+        folderPath:       `${event.template.folderPath}/draft`,
+        desktopEntryFile: event.template.desktopEntryFile,
+        mobileEntryFile:  event.template.mobileEntryFile,
+      };
+  const html = await renderTemplate(renderSource.folderPath, data, {
     variant,
-    preferredFile: variant === 'mobile' ? event.template.mobileEntryFile : event.template.desktopEntryFile,
-    desktopEntryFile: event.template.desktopEntryFile,
-    mobileEntryFile: event.template.mobileEntryFile,
+    preferredFile: variant === 'mobile' ? renderSource.mobileEntryFile : renderSource.desktopEntryFile,
+    desktopEntryFile: renderSource.desktopEntryFile,
+    mobileEntryFile:  renderSource.mobileEntryFile,
   });
 
   setNoCacheHeaders(res);

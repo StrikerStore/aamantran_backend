@@ -59,15 +59,17 @@ router.post('/payu', async (req, res) => {
     });
 
     if (swap) {
-      await prisma.event.update({
-        where: { id: swap.eventId },
-        data:  { templateId: swap.toTemplateId },
+      const toTemplate = await prisma.template.findUnique({
+        where:  { id: swap.toTemplateId },
+        select: { currentVersionId: true },
       });
+      const swapData = {
+        templateId:        swap.toTemplateId,
+        templateVersionId: toTemplate?.currentVersionId || null,
+      };
+      await prisma.event.update({ where: { id: swap.eventId }, data: swapData });
       if (swap.pairedEventId) {
-        await prisma.event.update({
-          where: { id: swap.pairedEventId },
-          data:  { templateId: swap.toTemplateId },
-        });
+        await prisma.event.update({ where: { id: swap.pairedEventId }, data: swapData });
       }
       await prisma.templateSwapRequest.update({
         where: { id: swap.id },

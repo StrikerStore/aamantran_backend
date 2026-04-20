@@ -95,14 +95,24 @@ async function saveThumbnail(filePath, folderName, originalName, variant = 'desk
 
 /**
  * Extract ZIP: local → storage/templates/{folder}; R2 → temp dir → upload all + template.zip.
+ *
+ * `folderName` is the full sub-path inside the templates/ root. With versioning
+ * this is e.g. "my-slug/draft" or "my-slug/v3" — the function is path-agnostic.
+ *
+ * `preserveThumbnails` keeps a `thumbnails/` subfolder at this exact path (used
+ * only when extracting into the legacy flat layout during backfill). For draft
+ * and version folders thumbnails live one level up, so the flag is off.
  */
-async function extractTemplateZip(zipFilePath, folderName) {
+async function extractTemplateZip(zipFilePath, folderName, { preserveThumbnails = false } = {}) {
   if (storage.useObjectStorage()) {
-    // Delete all objects in this template's folder EXCEPT thumbnails/
-    await objectStorage.deleteByPrefixExcluding(
-      `templates/${folderName}/`,
-      [`templates/${folderName}/thumbnails/`]
-    );
+    if (preserveThumbnails) {
+      await objectStorage.deleteByPrefixExcluding(
+        `templates/${folderName}/`,
+        [`templates/${folderName}/thumbnails/`]
+      );
+    } else {
+      await objectStorage.deleteByPrefix(`templates/${folderName}/`);
+    }
 
     const tmpRoot = path.join(os.tmpdir(), `aamantran-tpl-${crypto.randomUUID()}`);
     const dest = path.join(tmpRoot, 'extracted');
@@ -133,10 +143,9 @@ async function extractTemplateZip(zipFilePath, folderName) {
 
   const dest = path.join(TEMPLATES_DIR, folderName);
   if (fs.existsSync(dest)) {
-    // Delete everything except the thumbnails subfolder
     const entries = await fsp.readdir(dest);
     for (const entry of entries) {
-      if (entry === 'thumbnails') continue;
+      if (preserveThumbnails && entry === 'thumbnails') continue;
       await fsp.rm(path.join(dest, entry), { recursive: true, force: true });
     }
   }
@@ -153,6 +162,53 @@ async function extractTemplateZip(zipFilePath, folderName) {
   await fsp.unlink(zipFilePath).catch(() => {});
 
   return entryFiles;
+}
+
+/**
+ * Snapshot the current draft folder into an immutable version folder.
+ *
+ * Re-extracts the zip stored at draft/template.zip into v{n}/ — this regenerates
+ * asset-path rewrites against the new prefix, so rendered HTML in v{n}/ loads
+ * its assets from templates/{slug}/v{n}/ rather than the draft path.
+ *
+ * Returns entry file names for the new version.
+ */
+async function snapshotDraftToVersion(slug, versionNumber) {
+  const draftFolder   = `${slug}/draft`;
+  const versionFolder = `${slug}/v${versionNumber}`;
+
+  const tmpDir  = path.join(os.tmpdir(), `aamantran-snap-${crypto.randomUUID()}`);
+  fs.mkdirSync(tmpDir, { recursive: true });
+  const tmpZip = path.join(tmpDir, 'template.zip');
+
+  if (storage.useObjectStorage()) {
+    const srcKey = `templates/${draftFolder}/template.zip`;
+    const buf = await objectStorage.getObjectBuffer(srcKey);
+    await fsp.writeFile(tmpZip, buf);
+  } else {
+    const srcZip = path.join(TEMPLATES_DIR, draftFolder, 'template.zip');
+    if (!fs.existsSync(srcZip)) {
+      throw Object.assign(
+        new Error(`Cannot snapshot: draft/template.zip missing for ${slug}`),
+        { status: 409 }
+      );
+    }
+    await fsp.copyFile(srcZip, tmpZip);
+  }
+
+  // extractTemplateZip consumes (unlinks) tmpZip; rm the tmp dir after.
+  const entryFiles = await extractTemplateZip(tmpZip, versionFolder);
+  await fsp.rm(tmpDir, { recursive: true, force: true }).catch(() => {});
+
+  return { folderPath: versionFolder, ...entryFiles };
+}
+
+function draftFolderName(slug) {
+  return `${slug}/draft`;
+}
+
+function versionFolderName(slug, versionNumber) {
+  return `${slug}/v${versionNumber}`;
 }
 
 async function flattenIfNeeded(dir) {
@@ -388,6 +444,9 @@ async function detectTemplateEntryFiles(templateDir) {
 
 module.exports = {
   extractTemplateZip,
+  snapshotDraftToVersion,
+  draftFolderName,
+  versionFolderName,
   deleteTemplateFolder,
   readTemplateHtml,
   saveThumbnail,

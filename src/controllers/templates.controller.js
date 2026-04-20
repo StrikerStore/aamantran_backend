@@ -3,7 +3,13 @@ const fs           = require('fs');
 const prisma       = require('../utils/prisma');
 const slugify      = require('../utils/slugify');
 const generateId   = require('../utils/generateId');
-const { extractTemplateZip, deleteTemplateFolder, saveThumbnail } = require('../services/fileManager');
+const {
+  extractTemplateZip,
+  snapshotDraftToVersion,
+  draftFolderName,
+  deleteTemplateFolder,
+  saveThumbnail,
+} = require('../services/fileManager');
 const siteUrls     = require('../config/siteUrls');
 const storage      = require('../config/storage');
 const objectStorage = require('../services/objectStorage');
@@ -49,9 +55,26 @@ async function get(req, res) {
     include: {
       demoData: { include: { functions: { orderBy: { sortOrder: 'asc' } } } },
       reviews:  { include: { user: { select: { username: true, email: true } } }, orderBy: { createdAt: 'desc' } },
+      currentVersion: true,
+      versions:       { orderBy: { versionNumber: 'desc' }, select: { id: true, versionNumber: true, createdAt: true } },
     },
   });
-  res.json({ ok: true, data: template });
+
+  // Count events pinned to each version so the admin can see what's at stake
+  // before clicking Publish Changes.
+  const versionCounts = await prisma.event.groupBy({
+    by: ['templateVersionId'],
+    where: { templateId: template.id },
+    _count: { _all: true },
+  });
+  const countByVersion = Object.fromEntries(versionCounts.map(r => [r.templateVersionId, r._count._all]));
+  const versionsWithCounts = template.versions.map(v => ({
+    ...v,
+    eventCount: countByVersion[v.id] || 0,
+    isCurrent:  v.id === template.currentVersionId,
+  }));
+
+  res.json({ ok: true, data: { ...template, versions: versionsWithCounts } });
 }
 
 // POST /api/v1/templates   (multipart: templateZip + desktop/mobile thumbnail files + JSON body fields)
@@ -73,8 +96,9 @@ async function create(req, res) {
   const slug       = `${slugify(name)}-${generateId()}`;
   const folderPath = slug;
 
-  // Extract uploaded zip into storage/templates/{slug}/
-  const entryFiles = await extractTemplateZip(zipFile.path, folderPath);
+  // New templates start life as a draft. /demo reads from here; publishing
+  // snapshots it into v1/.
+  const entryFiles = await extractTemplateZip(zipFile.path, draftFolderName(slug));
 
   // Save thumbnails if provided
   let thumbnailUrl = null;
@@ -215,7 +239,10 @@ async function updateFiles(req, res) {
   const template = await prisma.template.findUniqueOrThrow({ where: { id: req.params.id } });
 
   if (zipFile) {
-    const entryFiles = await extractTemplateZip(zipFile.path, template.folderPath);
+    // Re-upload overwrites the draft only — existing published versions and the
+    // Events pinned to them stay untouched. The admin promotes the new draft to
+    // a version via POST /publish-changes when ready.
+    const entryFiles = await extractTemplateZip(zipFile.path, draftFolderName(template.folderPath));
     await prisma.template.update({
       where: { id: template.id },
       data: {
@@ -328,13 +355,75 @@ async function deleteThumbnail(req, res) {
   res.json({ ok: true });
 }
 
+/**
+ * Create a new immutable version snapshot from the current draft folder,
+ * then point Template.currentVersionId at it. Returns the new version row.
+ *
+ * Caller must ensure the draft has a template.zip (always true after
+ * create/updateFiles — those store the uploaded zip inside draft/).
+ */
+async function _snapshotAndRegisterVersion(template) {
+  const last = await prisma.templateVersion.findFirst({
+    where:   { templateId: template.id },
+    orderBy: { versionNumber: 'desc' },
+    select:  { versionNumber: true },
+  });
+  const nextNumber = (last?.versionNumber || 0) + 1;
+
+  const snap = await snapshotDraftToVersion(template.folderPath, nextNumber);
+
+  const version = await prisma.templateVersion.create({
+    data: {
+      templateId:       template.id,
+      versionNumber:    nextNumber,
+      folderPath:       snap.folderPath,
+      desktopEntryFile: snap.desktopEntryFile,
+      mobileEntryFile:  snap.mobileEntryFile,
+      fieldSchema:      template.fieldSchema ?? undefined,
+    },
+  });
+
+  await prisma.template.update({
+    where: { id: template.id },
+    data:  { currentVersionId: version.id },
+  });
+
+  return version;
+}
+
 // PATCH /api/v1/templates/:id/publish
+// First call: snapshots draft → v1 and activates. Subsequent calls: just
+// flip isActive=true (re-activating a previously unpublished template
+// without creating a new version). Use /publish-changes to snapshot.
 async function publish(req, res) {
-  const template = await prisma.template.update({
-    where: { id: req.params.id },
+  const template = await prisma.template.findUniqueOrThrow({ where: { id: req.params.id } });
+
+  if (!template.currentVersionId) {
+    await _snapshotAndRegisterVersion(template);
+  }
+
+  const updated = await prisma.template.update({
+    where: { id: template.id },
     data:  { isActive: true },
   });
-  res.json({ ok: true, data: template });
+  res.json({ ok: true, data: updated });
+}
+
+// POST /api/v1/templates/:id/publish-changes
+// Snapshot current draft → v{n+1}, bump currentVersionId. Existing Events stay
+// pinned to their old version; new purchases use the new one.
+async function publishChanges(req, res) {
+  const template = await prisma.template.findUniqueOrThrow({ where: { id: req.params.id } });
+
+  if (!template.currentVersionId) {
+    return res.status(409).json({
+      ok: false,
+      message: 'Template has no published version yet — use Publish instead.',
+    });
+  }
+
+  const version = await _snapshotAndRegisterVersion(template);
+  res.json({ ok: true, data: { version } });
 }
 
 // PATCH /api/v1/templates/:id/draft
@@ -504,4 +593,4 @@ async function deleteDemoMedia(req, res) {
   res.json({ ok: true, mediaSlotDemoUrls: updated });
 }
 
-module.exports = { list, get, create, update, updateFiles, updateDemoData, uploadDemoMedia, deleteDemoMedia, deleteThumbnail, publish, draft, remove };
+module.exports = { list, get, create, update, updateFiles, updateDemoData, uploadDemoMedia, deleteDemoMedia, deleteThumbnail, publish, publishChanges, draft, remove };
