@@ -665,19 +665,33 @@ async function getCustomFields(req, res) {
 }
 
 async function upsertCustomFields(req, res) {
-  const event = await prisma.event.findUnique({ where: { id: req.params.id }, select: { id: true, ownerId: true } });
+  const { parseFlexibleDateInputToYyyyMmDd, getDateCustomFieldKeysFromSchema } = require('../utils/dateNormalize');
+
+  const event = await prisma.event.findUnique({
+    where: { id: req.params.id },
+    select: { id: true, ownerId: true, template: { select: { fieldSchema: true } } },
+  });
   if (!ownerGuard(event, req.user.id)) return res.status(404).json({ ok: false, message: 'Event not found' });
 
   const { fields } = req.body || {};
   if (!Array.isArray(fields)) return res.status(400).json({ ok: false, message: 'fields array required' });
 
-  const ops = fields.map(({ fieldKey, fieldValue, fieldType }) =>
-    prisma.eventCustomField.upsert({
+  const dateKeys = getDateCustomFieldKeysFromSchema(event.template?.fieldSchema);
+
+  const ops = fields.map((row) => {
+    const fieldKey = String(row.fieldKey || row.key || '');
+    let fieldValue = row.fieldValue ?? row.value ?? '';
+    const fieldType = row.fieldType || 'text';
+    if (dateKeys.has(fieldKey) && fieldValue !== '' && fieldValue != null) {
+      const iso = parseFlexibleDateInputToYyyyMmDd(fieldValue);
+      if (iso) fieldValue = iso;
+    }
+    return prisma.eventCustomField.upsert({
       where:  { eventId_fieldKey: { eventId: req.params.id, fieldKey } },
       create: { eventId: req.params.id, fieldKey, fieldValue: String(fieldValue), fieldType: fieldType || 'text' },
       update: { fieldValue: String(fieldValue), fieldType: fieldType || 'text' },
-    })
-  );
+    });
+  });
   const results = await prisma.$transaction(ops);
   return res.json({ ok: true, fields: results });
 }

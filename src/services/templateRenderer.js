@@ -2,6 +2,7 @@ const Handlebars = require('handlebars');
 const { readTemplateHtml } = require('./fileManager');
 const { injectAamantranRuntime } = require('./aamantranSdk');
 const siteUrls = require('../config/siteUrls');
+const { parseFlexibleDateInputToYyyyMmDd } = require('../utils/dateNormalize');
 
 // ─── Handlebars helpers ──────────────────────────────────────────────────────
 
@@ -195,9 +196,14 @@ function buildInvitationData(event) {
   // ── Custom fields: key→value object ──
   const custom = {};
   for (const cf of (event.customFields || [])) {
-    custom[cf.fieldKey] = cf.fieldType === 'json'
+    let v = cf.fieldType === 'json'
       ? safeJsonParse(cf.fieldValue)
       : cf.fieldValue;
+    if (cf.fieldType === 'date' && v != null && v !== '') {
+      const iso = parseFlexibleDateInputToYyyyMmDd(v);
+      if (iso) v = iso;
+    }
+    custom[cf.fieldKey] = v;
   }
 
   // ── Functions (sub-events) ──
@@ -366,10 +372,23 @@ function buildDemoData(demoData) {
     peopleFlatVars[`${p.role}_photo`] = p.photo_url;
   }
 
-  // ── Custom fields from demo data ──
+  // ── Custom fields from demo data (JSON may be string; rows use key or fieldKey)
   const custom = {};
-  for (const cf of (demoData.customFields || [])) {
-    custom[cf.key] = cf.value || '';
+  let demoCfRows = demoData.customFields;
+  if (typeof demoCfRows === 'string') {
+    try { demoCfRows = JSON.parse(demoCfRows); } catch { demoCfRows = []; }
+  }
+  if (!Array.isArray(demoCfRows)) demoCfRows = [];
+  for (const cf of demoCfRows) {
+    const k = cf.key ?? cf.fieldKey;
+    if (!k) continue;
+    let v = cf.value ?? cf.fieldValue ?? '';
+    if (v != null && typeof v !== 'string') v = String(v);
+    if (k === 'wedding_date' || k === 'wedding_date_raw') {
+      const iso = parseFlexibleDateInputToYyyyMmDd(v);
+      if (iso) v = iso;
+    }
+    custom[k] = v || '';
   }
 
   const rsvpDemo = demoData.rsvpEnabled !== false && demoData.rsvp_enabled !== false;
@@ -458,9 +477,7 @@ function toYyyyMmDd(value) {
     const d = String(value.getDate()).padStart(2, '0');
     return `${y}-${m}-${d}`;
   }
-  const s = String(value).trim();
-  const m = s.match(/^(\d{4}-\d{2}-\d{2})/);
-  return m ? m[1] : '';
+  return parseFlexibleDateInputToYyyyMmDd(value);
 }
 
 function formatDate(date) {

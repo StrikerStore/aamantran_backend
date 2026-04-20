@@ -13,6 +13,7 @@ const {
 const siteUrls     = require('../config/siteUrls');
 const storage      = require('../config/storage');
 const objectStorage = require('../services/objectStorage');
+const { normalizeDemoCustomFieldRows } = require('../utils/dateNormalize');
 
 // GET /api/v1/templates
 async function list(req, res) {
@@ -113,6 +114,9 @@ async function create(req, res) {
 
   // Build demo data rows if provided
   const parsedDemo = demoData ? JSON.parse(demoData) : null;
+  const demoCustomNormalized = parsedDemo
+    ? normalizeDemoCustomFieldRows(parsedDemo.field_schema || null, parsedDemo.custom_fields || [])
+    : [];
 
   const template = await prisma.template.create({
     data: {
@@ -148,7 +152,7 @@ async function create(req, res) {
             musicUrl:     parsedDemo.music_url  || null,
             language:     parsedDemo.language   || 'en',
             people:       parsedDemo.people     || [],
-            customFields: parsedDemo.custom_fields || [],
+            customFields: demoCustomNormalized,
             mediaSlotDemoUrls: parsedDemo.media_slot_demo_urls || null,
             instagramUrl:      parsedDemo.instagram_url      || null,
             socialYoutubeUrl:  parsedDemo.social_youtube_url || null,
@@ -293,6 +297,9 @@ async function updateDemoData(req, res) {
     });
   }
 
+  const schemaForDemo = demo.field_schema ?? template.fieldSchema;
+  const demoCustomNormalized = normalizeDemoCustomFieldRows(schemaForDemo, demo.custom_fields || []);
+
   const updated = await prisma.templateDemoData.create({
     data: {
       templateId:   template.id,
@@ -305,7 +312,7 @@ async function updateDemoData(req, res) {
       musicUrl:     demo.music_url     || null,
       language:     demo.language      || 'en',
       people:           demo.people             || [],
-      customFields:     demo.custom_fields      || [],
+      customFields:     demoCustomNormalized,
       mediaSlotDemoUrls: demo.media_slot_demo_urls || null,
       instagramUrl:      demo.instagram_url      || null,
       socialYoutubeUrl:  demo.social_youtube_url || null,
