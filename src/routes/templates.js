@@ -34,6 +34,7 @@ router.delete('/:id/thumbnail/:variant', controller.deleteThumbnail);
 router.patch('/:id/publish',         controller.publish);
 router.post ('/:id/publish-changes', controller.publishChanges);
 router.patch('/:id/draft',           controller.draft);
+router.delete('/:id/versions/:versionId', controller.deleteVersion);
 router.delete('/:id',        controller.remove);
 
 module.exports = router;

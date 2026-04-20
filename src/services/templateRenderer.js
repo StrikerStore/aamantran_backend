@@ -275,6 +275,10 @@ function buildInvitationData(event) {
     (primaryWeddingIso ? formatDate(new Date(`${primaryWeddingIso}T12:00:00`)) : '')
     || (event.functions?.[0]?.date ? formatDate(event.functions[0].date) : '');
 
+  const tv = event.templateVersion;
+  const template_version_number = tv?.versionNumber != null ? String(tv.versionNumber) : '';
+  const template_version_label = tv?.versionNumber != null ? `v${tv.versionNumber}` : '';
+
   return {
     // Backward-compat flat vars (still work in existing templates)
     bride_name:    event.brideName  || peopleFlatVars.bride_name  || '',
@@ -312,6 +316,10 @@ function buildInvitationData(event) {
     // After spreads: ISO for client scripts; pretty wedding_date (overrides raw custom ISO)
     wedding_date_iso,
     wedding_date: wedding_date_display,
+
+    // Pinned template file snapshot (live + preview). Demo leaves these empty.
+    template_version_number,
+    template_version_label,
   };
 }
 
@@ -465,6 +473,9 @@ function buildDemoData(demoData) {
 
     wedding_date_iso,
     wedding_date: wedding_date_display || demoData.weddingDate || '',
+
+    template_version_number: '',
+    template_version_label: '',
   };
 }
 

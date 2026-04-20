@@ -458,6 +458,81 @@ async function draft(req, res) {
   res.json({ ok: true, data: template });
 }
 
+// DELETE /api/v1/templates/:id/versions/:versionId
+// Removes a historical snapshot only when no invitation pins it and it is not current.
+async function deleteVersion(req, res) {
+  const templateId = req.params.id;
+  const versionId = req.params.versionId;
+
+  const template = await prisma.template.findUnique({
+    where: { id: templateId },
+    select: { id: true, folderPath: true, currentVersionId: true },
+  });
+  if (!template) {
+    return res.status(404).json({ ok: false, message: 'Template not found' });
+  }
+
+  const version = await prisma.templateVersion.findFirst({
+    where: { id: versionId, templateId: template.id },
+  });
+  if (!version) {
+    return res.status(404).json({ ok: false, message: 'Version not found' });
+  }
+
+  if (template.currentVersionId === version.id) {
+    return res.status(409).json({
+      ok: false,
+      message: 'Cannot delete the current published version.',
+    });
+  }
+
+  const pinned = await prisma.event.count({
+    where: { templateVersionId: version.id },
+  });
+  if (pinned > 0) {
+    return res.status(409).json({
+      ok: false,
+      message: `Cannot delete: ${pinned} invitation(s) still use this version`,
+    });
+  }
+
+  const slugPrefix = `${template.folderPath}/`;
+  if (!version.folderPath || !version.folderPath.startsWith(slugPrefix)) {
+    return res.status(500).json({
+      ok: false,
+      message: 'Version storage path does not match template — delete aborted',
+    });
+  }
+
+  await deleteTemplateFolder(version.folderPath);
+  await prisma.templateVersion.delete({ where: { id: version.id } });
+
+  const refreshed = await prisma.template.findUniqueOrThrow({
+    where: { id: template.id },
+    include: {
+      currentVersion: true,
+      versions: {
+        orderBy: { versionNumber: 'desc' },
+        select: { id: true, versionNumber: true, createdAt: true },
+      },
+    },
+  });
+
+  const versionCounts = await prisma.event.groupBy({
+    by: ['templateVersionId'],
+    where: { templateId: template.id },
+    _count: { _all: true },
+  });
+  const countByVersion = Object.fromEntries(versionCounts.map((r) => [r.templateVersionId, r._count._all]));
+  const versionsWithCounts = refreshed.versions.map((v) => ({
+    ...v,
+    eventCount: countByVersion[v.id] || 0,
+    isCurrent: v.id === refreshed.currentVersionId,
+  }));
+
+  res.json({ ok: true, data: { versions: versionsWithCounts } });
+}
+
 // DELETE /api/v1/templates/:id
 async function remove(req, res) {
   const template = await prisma.template.findUniqueOrThrow({ where: { id: req.params.id } });
@@ -616,4 +691,19 @@ async function deleteDemoMedia(req, res) {
   res.json({ ok: true, mediaSlotDemoUrls: updated });
 }
 
-module.exports = { list, get, create, update, updateFiles, updateDemoData, uploadDemoMedia, deleteDemoMedia, deleteThumbnail, publish, publishChanges, draft, remove };
+module.exports = {
+  list,
+  get,
+  create,
+  update,
+  updateFiles,
+  updateDemoData,
+  uploadDemoMedia,
+  deleteDemoMedia,
+  deleteThumbnail,
+  publish,
+  publishChanges,
+  draft,
+  deleteVersion,
+  remove,
+};
