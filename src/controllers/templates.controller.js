@@ -60,8 +60,7 @@ async function get(req, res) {
     },
   });
 
-  // Count events pinned to each version so the admin can see what's at stake
-  // before clicking Publish Changes.
+  // Count events pinned to each version (after publish-changes, typically all on current).
   const versionCounts = await prisma.event.groupBy({
     by: ['templateVersionId'],
     where: { templateId: template.id },
@@ -356,6 +355,21 @@ async function deleteThumbnail(req, res) {
 }
 
 /**
+ * Point every invitation on this template at the given version and clear render cache.
+ * @returns {Promise<{ count: number }>}
+ */
+async function repointAllEventsToTemplateVersion(templateId, versionId) {
+  const { count } = await prisma.event.updateMany({
+    where: { templateId },
+    data:  { templateVersionId: versionId },
+  });
+  await prisma.eventRenderCache.deleteMany({
+    where: { event: { templateId } },
+  });
+  return { count };
+}
+
+/**
  * Create a new immutable version snapshot from the current draft folder,
  * then point Template.currentVersionId at it. Returns the new version row.
  *
@@ -399,7 +413,8 @@ async function publish(req, res) {
   const template = await prisma.template.findUniqueOrThrow({ where: { id: req.params.id } });
 
   if (!template.currentVersionId) {
-    await _snapshotAndRegisterVersion(template);
+    const version = await _snapshotAndRegisterVersion(template);
+    await repointAllEventsToTemplateVersion(template.id, version.id);
   }
 
   const updated = await prisma.template.update({
@@ -410,8 +425,8 @@ async function publish(req, res) {
 }
 
 // POST /api/v1/templates/:id/publish-changes
-// Snapshot current draft → v{n+1}, bump currentVersionId. Existing Events stay
-// pinned to their old version; new purchases use the new one.
+// Snapshot current draft → v{n+1}, bump currentVersionId, repoint every Event
+// on this template to the new version so live invites pick up the new bundle.
 async function publishChanges(req, res) {
   const template = await prisma.template.findUniqueOrThrow({ where: { id: req.params.id } });
 
@@ -423,7 +438,8 @@ async function publishChanges(req, res) {
   }
 
   const version = await _snapshotAndRegisterVersion(template);
-  res.json({ ok: true, data: { version } });
+  const { count } = await repointAllEventsToTemplateVersion(template.id, version.id);
+  res.json({ ok: true, data: { version, eventsUpdated: count } });
 }
 
 // PATCH /api/v1/templates/:id/draft

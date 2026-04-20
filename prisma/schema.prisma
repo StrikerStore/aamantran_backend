@@ -53,8 +53,8 @@ model Template {
 }
 
 // Immutable snapshot of a template's files taken on publish / publish-changes.
-// Events pin one of these at creation time so later template edits don't change
-// what an existing couple's invitation renders as.
+// Each Event pins a version for rendering; publish-changes repoints all events on
+// that template to the new snapshot so live invites pick up the new bundle.
 model TemplateVersion {
   id               String   @id @default(uuid())
   templateId       String
@@ -182,7 +182,7 @@ model Event {
   owner        User      @relation(fields: [ownerId], references: [id])
   templateId   String
   template     Template  @relation(fields: [templateId], references: [id])
-  // Pinned template version for render stability. Null only during backfill.
+  // Pinned template version folder for render; publish-changes updates all rows on this templateId.
   templateVersionId String?
   templateVersion   TemplateVersion? @relation("EventTemplateVersion", fields: [templateVersionId], references: [id], onDelete: SetNull)
   community    String

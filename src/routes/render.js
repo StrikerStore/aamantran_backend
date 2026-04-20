@@ -190,9 +190,9 @@ router.get('/i/:slug', async (req, res) => {
   }));
   // Build photos list for window.__AAMANTRAN__.photos from all photo-type media
   const sdkPhotos = (data.photos || []);
-  // Each invitation renders against the version it was pinned to at creation —
-  // this keeps layout stable even after the template is re-published. The
-  // fallback (draft) only triggers for legacy events whose backfill did not run.
+  // Each invitation renders against its pinned TemplateVersion; admin publish-changes
+  // repoints all events on that template to the new snapshot. Draft fallback is for
+  // legacy events whose backfill did not run.
   const renderSource = event.templateVersion
     ? {
         folderPath:       event.templateVersion.folderPath,
