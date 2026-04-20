@@ -257,11 +257,22 @@ function buildInvitationData(event) {
   const rsvp_enabled = event.rsvpEnabled !== false;
   const guest_notes_enabled = event.guestNotesEnabled !== false;
 
+  // ISO YYYY-MM-DD for template JS. Prefer custom field `wedding_date`, then legacy
+  // `wedding_date_raw`, else first function date. Pretty `wedding_date` is set after spreads.
+  const primaryWeddingIso =
+    toYyyyMmDd(custom.wedding_date)
+    || toYyyyMmDd(custom.wedding_date_raw);
+  const wedding_date_iso =
+    primaryWeddingIso
+    || (event.functions?.[0]?.date ? toYyyyMmDd(event.functions[0].date) : '');
+  const wedding_date_display =
+    (primaryWeddingIso ? formatDate(new Date(`${primaryWeddingIso}T12:00:00`)) : '')
+    || (event.functions?.[0]?.date ? formatDate(event.functions[0].date) : '');
+
   return {
     // Backward-compat flat vars (still work in existing templates)
     bride_name:    event.brideName  || peopleFlatVars.bride_name  || '',
     groom_name:    event.groomName  || peopleFlatVars.groom_name  || '',
-    wedding_date:  event.functions?.[0] ? formatDate(event.functions[0].date) : '',
     venue_name:    event.functions?.[0]?.venueName || '',
     venue_address: event.functions?.[0]?.venueAddress || '',
     language:      event.language || 'en',
@@ -291,6 +302,10 @@ function buildInvitationData(event) {
 
     // e.g. {{media_couple_carousel_url}} for first image in that slot
     ...mediaSlotFlat,
+
+    // After spreads: ISO for client scripts; pretty wedding_date (overrides raw custom ISO)
+    wedding_date_iso,
+    wedding_date: wedding_date_display,
   };
 }
 
@@ -360,11 +375,23 @@ function buildDemoData(demoData) {
   const rsvpDemo = demoData.rsvpEnabled !== false && demoData.rsvp_enabled !== false;
   const notesDemo = demoData.guestNotesEnabled !== false && demoData.guest_notes_enabled !== false;
 
+  const primaryWeddingIso =
+    toYyyyMmDd(custom.wedding_date)
+    || toYyyyMmDd(custom.wedding_date_raw);
+  const wedding_date_iso =
+    primaryWeddingIso
+    || toYyyyMmDd(demoData.weddingDate)
+    || toYyyyMmDd(demoData.wedding_date)
+    || toYyyyMmDd((demoData.functions || [])[0]?.date)
+    || '';
+  const wedding_date_display = wedding_date_iso
+    ? formatDate(new Date(`${wedding_date_iso}T12:00:00`))
+    : '';
+
   return {
     // Backward-compat flat vars
     bride_name:    demoData.brideName  || peopleFlatVars.bride_name  || '',
     groom_name:    demoData.groomName  || peopleFlatVars.groom_name  || '',
-    wedding_date:  demoData.weddingDate || '',
     venue_name:    demoData.venueName   || '',
     venue_address: demoData.venueAddress || '',
     language:      demoData.language || 'en',
@@ -416,7 +443,24 @@ function buildDemoData(demoData) {
     ...custom,
     // Spread flat media slot vars (e.g. {{media_ganesh_url}})
     ...buildDemoMediaSlotFlat(demoData.mediaSlotDemoUrls),
+
+    wedding_date_iso,
+    wedding_date: wedding_date_display || demoData.weddingDate || '',
   };
+}
+
+/** Normalize Date or string to YYYY-MM-DD for client-side template scripts. */
+function toYyyyMmDd(value) {
+  if (value == null || value === '') return '';
+  if (value instanceof Date && !Number.isNaN(value.getTime())) {
+    const y = value.getFullYear();
+    const m = String(value.getMonth() + 1).padStart(2, '0');
+    const d = String(value.getDate()).padStart(2, '0');
+    return `${y}-${m}-${d}`;
+  }
+  const s = String(value).trim();
+  const m = s.match(/^(\d{4}-\d{2}-\d{2})/);
+  return m ? m[1] : '';
 }
 
 function formatDate(date) {
