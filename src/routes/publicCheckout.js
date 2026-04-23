@@ -107,11 +107,17 @@ async function getCouponDiscount(baseAmount, couponCodeRaw, customerEmailRaw) {
 // ─── Helper: mark a payment as paid and fire purchase email ──────────────────
 
 async function markPaymentPaid(payment, mihpayid) {
-  const updated = await prisma.payment.update({
-    where: { id: payment.id },
-    data: { status: 'paid', payuMihpayid: mihpayid || null },
-    include: { template: { select: { name: true, slug: true } } },
-  });
+  const [updated] = await prisma.$transaction([
+    prisma.payment.update({
+      where: { id: payment.id },
+      data: { status: 'paid', payuMihpayid: mihpayid || null },
+      include: { template: { select: { name: true, slug: true } } },
+    }),
+    prisma.template.update({
+      where: { id: payment.templateId },
+      data:  { buyerCount: { increment: 1 } },
+    }),
+  ]);
 
   if (updated.customerEmail) {
     const onboardingUrl = `${siteUrls.landingUrl()}/onboarding?paymentId=${encodeURIComponent(updated.id)}&slug=${encodeURIComponent(updated.template.slug)}&template=${encodeURIComponent(updated.template.name)}`;
@@ -406,6 +412,11 @@ router.post('/payu-swap-success', async (req, res) => {
       });
     }
 
+    await prisma.template.update({
+      where: { id: swap.toTemplateId },
+      data:  { buyerCount: { increment: 1 } },
+    });
+
     return res.redirect(`${siteUrls.coupleDashboardUrl()}/?payment=success`);
   } catch (err) {
     console.error('[PayU] payu-swap-success error:', err.message);
@@ -436,6 +447,11 @@ router.post('/mock-success', async (req, res) => {
         payuMihpayid: `mock_mihpay_${Date.now()}`,
       },
       include: { template: { select: { name: true, slug: true } } },
+    });
+
+    await prisma.template.update({
+      where: { id: payment.templateId },
+      data:  { buyerCount: { increment: 1 } },
     });
 
     if (payment.customerEmail) {

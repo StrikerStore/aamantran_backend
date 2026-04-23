@@ -47,10 +47,16 @@ router.post('/payu', async (req, res) => {
     });
 
     if (payment && payment.status !== 'paid') {
-      await prisma.payment.update({
-        where: { id: payment.id },
-        data:  { status: 'paid', payuMihpayid: mihpayid || null },
-      });
+      await prisma.$transaction([
+        prisma.payment.update({
+          where: { id: payment.id },
+          data:  { status: 'paid', payuMihpayid: mihpayid || null },
+        }),
+        prisma.template.update({
+          where: { id: payment.templateId },
+          data:  { buyerCount: { increment: 1 } },
+        }),
+      ]);
     }
 
     // 2. Try swap payment
@@ -89,6 +95,11 @@ router.post('/payu', async (req, res) => {
             amount:       swap.balanceAmount,
             status:       'paid',
           },
+        });
+        // Only increment buyerCount when we're creating the record for the first time
+        await prisma.template.update({
+          where: { id: swap.toTemplateId },
+          data:  { buyerCount: { increment: 1 } },
         });
       }
     }
