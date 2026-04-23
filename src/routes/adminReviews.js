@@ -1,6 +1,21 @@
 const express = require('express');
+const multer  = require('multer');
+const path    = require('path');
+const { v4: uuidv4 } = require('uuid');
 const auth    = require('../middleware/auth');
 const prisma  = require('../utils/prisma');
+const storage       = require('../config/storage');
+const objectStorage = require('../services/objectStorage');
+
+const photoUpload = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: 5 * 1024 * 1024 },
+  fileFilter: (_req, file, cb) => {
+    const ext = path.extname(file.originalname || '').toLowerCase();
+    if (['.jpg', '.jpeg', '.png', '.webp', '.avif'].includes(ext)) return cb(null, true);
+    cb(new Error('Only image files are allowed for review photos'));
+  },
+});
 
 const router = express.Router();
 router.use(auth);
@@ -38,15 +53,30 @@ router.get('/', async (req, res) => {
   }
 });
 
-// POST /api/v1/reviews — admin creates a review
-router.post('/', async (req, res) => {
+// POST /api/v1/reviews — admin creates a review (multipart/form-data)
+router.post('/', photoUpload.single('couplePhoto'), async (req, res) => {
   try {
-    const { templateId, rating, reviewText, coupleNames, location, couplePhotoUrl } = req.body || {};
+    const { templateId, rating, reviewText, coupleNames, location } = req.body || {};
     if (!templateId) return res.status(400).json({ message: 'templateId is required' });
     if (!rating || rating < 1 || rating > 5) return res.status(400).json({ message: 'rating must be 1–5' });
 
     const template = await prisma.template.findUnique({ where: { id: templateId }, select: { id: true } });
     if (!template) return res.status(404).json({ message: 'Template not found' });
+
+    let couplePhotoUrl = null;
+    if (req.file) {
+      try {
+        const ext = path.extname(req.file.originalname || '').toLowerCase() || '.jpg';
+        const key = `reviews/${uuidv4()}${ext}`;
+        const ct  = storage.contentTypeForPath(req.file.originalname || `file${ext}`);
+        if (storage.useObjectStorage()) {
+          await objectStorage.putObject(key, req.file.buffer, ct);
+          couplePhotoUrl = `${storage.objectStoragePublicBase()}/${key}`;
+        }
+      } catch (uploadErr) {
+        console.error('[AdminReview] Photo upload failed:', uploadErr.message);
+      }
+    }
 
     const review = await prisma.templateReview.create({
       data: {
@@ -55,7 +85,7 @@ router.post('/', async (req, res) => {
         reviewText: reviewText || null,
         coupleNames: coupleNames || null,
         location: location || null,
-        couplePhotoUrl: couplePhotoUrl || null,
+        couplePhotoUrl,
         isAdminCreated: true,
       },
       select: REVIEW_SELECT,
