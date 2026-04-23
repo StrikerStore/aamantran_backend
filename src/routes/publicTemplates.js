@@ -52,7 +52,7 @@ router.get('/', async (req, res) => {
 router.get('/featured', async (req, res) => {
   const { limit = 6 } = req.query;
   const reviews = await prisma.templateReview.findMany({
-    where:   { reviewText: { not: null } },
+    where:   { reviewText: { not: null }, isHidden: false },
     take:    Number(limit),
     orderBy: { createdAt: 'desc' },
     select: {
@@ -81,7 +81,7 @@ router.get('/:slug', async (req, res) => {
 
   if (!template) return res.status(404).json({ message: 'Template not found' });
 
-  const reviewCount = await prisma.templateReview.count({ where: { templateId: template.id } });
+  const reviewCount = await prisma.templateReview.count({ where: { templateId: template.id, isHidden: false } });
   res.json({ ...template, reviewCount });
 });
 
@@ -92,7 +92,7 @@ router.get('/:slug/reviews', async (req, res) => {
   if (!template) return res.json([]);
 
   const reviews = await prisma.templateReview.findMany({
-    where:   { templateId: template.id },
+    where:   { templateId: template.id, isHidden: false },
     take:    Number(limit),
     orderBy: { createdAt: 'desc' },
     select: {

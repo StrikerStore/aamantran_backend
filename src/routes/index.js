@@ -7,6 +7,7 @@ const userRoutes           = require('./users');
 const transactionRoutes    = require('./transactions');
 const ticketRoutes         = require('./tickets');
 const couponRoutes         = require('./coupons');
+const adminReviewRoutes    = require('./adminReviews');
 const renderRoutes         = require('./render');
 const publicCheckoutRoutes = require('./publicCheckout');
 const publicInviteRoutes   = require('./publicInvite');
@@ -35,6 +36,7 @@ router.use('/api/v1/transactions', transactionRoutes);
 router.use('/api/v1/tickets',      ticketRoutes);
 router.use('/api/v1/coupons',      couponRoutes);
 router.use('/api/v1/assets',       globalAssetsRoutes);
+router.use('/api/v1/reviews',      adminReviewRoutes);
 router.use('/api/assets',          globalAssetsRoutes); // Public GET access
 
 // ── User Dashboard API (JWT-protected, role: user) ───────────────────

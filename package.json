@@ -5,7 +5,7 @@
   "main": "src/server.js",
   "scripts": {
     "postinstall": "prisma generate",
-    "prestart": "npx prisma migrate resolve --rolled-back 20260412094808_add_venue_map_url_dress_code_to_demo_function 2>/dev/null; npx prisma migrate resolve --rolled-back 20260412120000_migrate_payment_to_payu 2>/dev/null; npx prisma migrate resolve --rolled-back 20260414015338_add_review_couple_photo 2>/dev/null; npx prisma migrate resolve --rolled-back 20260414035000_add_global_assets 2>/dev/null; npx prisma migrate deploy && node scripts/backfill-template-versions.js --apply",
+    "prestart": "npx prisma migrate resolve --rolled-back 20260412094808_add_venue_map_url_dress_code_to_demo_function 2>/dev/null; npx prisma migrate resolve --rolled-back 20260412120000_migrate_payment_to_payu 2>/dev/null; npx prisma migrate resolve --rolled-back 20260414015338_add_review_couple_photo 2>/dev/null; npx prisma migrate resolve --rolled-back 20260414035000_add_global_assets 2>/dev/null; npx prisma migrate resolve --rolled-back 20260424000000_reviews_hidden_admin 2>/dev/null; npx prisma migrate deploy && node scripts/backfill-template-versions.js --apply",
     "start": "node src/server.js",
     "db:deploy": "npx prisma migrate deploy && node scripts/backfill-template-versions.js --apply",
     "db:backfill-versions": "node scripts/backfill-template-versions.js --apply",
