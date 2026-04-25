@@ -49,20 +49,37 @@ router.get('/', async (req, res) => {
 
 // GET /api/reviews/featured — must be before /:slug to avoid slug capture
 // (mounted at /api/reviews in index.js → resolves to /api/reviews/featured)
+// Returns { reviews, avgRating, totalCount } where avgRating/totalCount are
+// computed from ALL non-hidden reviews on the platform (not just the slice
+// returned), so the UI can show "X.X based on N reviews" header.
 router.get('/featured', async (req, res) => {
-  const { limit = 6 } = req.query;
-  const reviews = await prisma.templateReview.findMany({
-    where:   { reviewText: { not: null }, isHidden: false },
-    take:    Number(limit),
-    orderBy: { createdAt: 'desc' },
-    select: {
-      id: true, rating: true, reviewText: true,
-      coupleNames: true, location: true, createdAt: true,
-      couplePhotoUrl: true,
-      template: { select: { name: true, slug: true } },
-    },
+  const { limit = 50 } = req.query;
+  const where = { reviewText: { not: null }, isHidden: false };
+
+  const [reviews, agg] = await Promise.all([
+    prisma.templateReview.findMany({
+      where,
+      take:    Number(limit),
+      orderBy: { createdAt: 'desc' },
+      select: {
+        id: true, rating: true, reviewText: true,
+        coupleNames: true, location: true, createdAt: true,
+        couplePhotoUrl: true,
+        template: { select: { name: true, slug: true } },
+      },
+    }),
+    prisma.templateReview.aggregate({
+      where: { isHidden: false },
+      _avg:  { rating: true },
+      _count: { _all: true },
+    }),
+  ]);
+
+  res.json({
+    reviews,
+    avgRating: agg._avg.rating ? Number(agg._avg.rating.toFixed(2)) : 0,
+    totalCount: agg._count._all,
   });
-  res.json(reviews);
 });
 
 // GET /api/templates/:slug — single template detail for product page
@@ -86,22 +103,37 @@ router.get('/:slug', async (req, res) => {
 });
 
 // GET /api/templates/:slug/reviews
+// Returns { reviews, avgRating, totalCount } scoped to this template.
 router.get('/:slug/reviews', async (req, res) => {
-  const { limit = 6 } = req.query;
+  const { limit = 50 } = req.query;
   const template = await prisma.template.findUnique({ where: { slug: req.params.slug } });
-  if (!template) return res.json([]);
+  if (!template) return res.json({ reviews: [], avgRating: 0, totalCount: 0 });
 
-  const reviews = await prisma.templateReview.findMany({
-    where:   { templateId: template.id, isHidden: false },
-    take:    Number(limit),
-    orderBy: { createdAt: 'desc' },
-    select: {
-      id: true, rating: true, reviewText: true,
-      coupleNames: true, location: true, createdAt: true,
-      couplePhotoUrl: true,
-    },
+  const where = { templateId: template.id, isHidden: false };
+
+  const [reviews, agg] = await Promise.all([
+    prisma.templateReview.findMany({
+      where,
+      take:    Number(limit),
+      orderBy: { createdAt: 'desc' },
+      select: {
+        id: true, rating: true, reviewText: true,
+        coupleNames: true, location: true, createdAt: true,
+        couplePhotoUrl: true,
+      },
+    }),
+    prisma.templateReview.aggregate({
+      where,
+      _avg:  { rating: true },
+      _count: { _all: true },
+    }),
+  ]);
+
+  res.json({
+    reviews,
+    avgRating: agg._avg.rating ? Number(agg._avg.rating.toFixed(2)) : 0,
+    totalCount: agg._count._all,
   });
-  res.json(reviews);
 });
 
 module.exports = router;
