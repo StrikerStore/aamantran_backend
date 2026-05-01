@@ -222,6 +222,15 @@ model Event {
   renderCache  EventRenderCache?
   swapRequests       TemplateSwapRequest[] @relation("TemplateSwapPrimaryEvent")
   swapRequestsPaired TemplateSwapRequest[] @relation("TemplateSwapPairedEvent")
+  tasks              Task[]
+  inventoryItems     InventoryItem[]
+  budget             EventBudget?
+  budgetExpenses     BudgetExpense[]
+  eventVendors       EventVendor[]
+  timelineEntries    TimelineEntry[]
+  moodBoardPins      MoodBoardPin[]
+  gifts              Gift[]
+  photoWallItems     PhotoWallItem[]
 
   @@index([invitePairId])
 }
@@ -454,4 +463,169 @@ model GlobalAsset {
   name      String
   url       String   @db.VarChar(2048)
   createdAt DateTime @default(now())
+}
+
+// ─── TASKS (wedding planning scheduler) ───────────────────────────────────────
+
+model Task {
+  id         String   @id @default(uuid())
+  eventId    String
+  event      Event    @relation(fields: [eventId], references: [id], onDelete: Cascade)
+  title      String
+  category   String   @default("Other")   // Venue, Catering, Photography, Attire, Invitations, Decor, Travel, Other
+  dueDate    String?                       // YYYY-MM-DD (frontend sends/reads as string)
+  priority   String   @default("medium")   // low, medium, high
+  assignedTo String?                       // bride, groom, family, vendor
+  status     String   @default("todo")     // todo, inprogress, done
+  notes      String?  @db.Text
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  @@index([eventId])
+}
+
+// ─── INVENTORY (track items for the wedding) ──────────────────────────────────
+
+model InventoryItem {
+  id            String   @id @default(uuid())
+  eventId       String
+  event         Event    @relation(fields: [eventId], references: [id], onDelete: Cascade)
+  name          String
+  category      String   @default("Other")
+  subCategory   String?
+  quantity      Int      @default(1)
+  unit          String   @default("pcs")
+  status        String   @default("to-buy")  // to-buy, ordered, received, packed, at-venue, done
+  location      String?
+  assignedTo    String?
+  vendor        String?
+  estimatedCost Decimal? @db.Decimal(12, 2)
+  actualCost    Decimal? @db.Decimal(12, 2)
+  reminderDate  String?                      // YYYY-MM-DD
+  reminderNote  String?
+  notes         String?  @db.Text
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  @@index([eventId])
+}
+
+// ─── BUDGET (total budget + expense entries) ──────────────────────────────────
+
+model EventBudget {
+  id          String   @id @default(uuid())
+  eventId     String   @unique
+  event       Event    @relation(fields: [eventId], references: [id], onDelete: Cascade)
+  totalBudget Decimal  @default(0) @db.Decimal(14, 2)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+}
+
+model BudgetExpense {
+  id          String   @id @default(uuid())
+  eventId     String
+  event       Event    @relation(fields: [eventId], references: [id], onDelete: Cascade)
+  description String
+  category    String   @default("Other")
+  vendor      String?
+  amount      Decimal  @default(0) @db.Decimal(12, 2)
+  paid        Boolean  @default(false)
+  dueDate     String?
+  notes       String?  @db.Text
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@index([eventId])
+}
+
+// ─── VENDORS (service providers) ──────────────────────────────────────────────
+
+model EventVendor {
+  id          String   @id @default(uuid())
+  eventId     String
+  event       Event    @relation(fields: [eventId], references: [id], onDelete: Cascade)
+  name        String
+  type        String   @default("Other")       // Photography, Catering, Decor, Music, Attire, Priest, Transport, Makeup, Mehendi, Other
+  contactName String?
+  phone       String?
+  email       String?
+  website     String?  @db.VarChar(2048)
+  packageName String?
+  packageCost Decimal? @db.Decimal(12, 2)
+  depositPaid Decimal? @db.Decimal(12, 2)
+  totalPaid   Decimal? @db.Decimal(12, 2)
+  status      String   @default("contacted")   // contacted, negotiating, booked, deposit-paid, fully-paid, cancelled
+  bookingDate String?
+  notes       String?  @db.Text
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@index([eventId])
+}
+
+// ─── TIMELINE (day-of schedule) ───────────────────────────────────────────────
+
+model TimelineEntry {
+  id                String   @id @default(uuid())
+  eventId           String
+  event             Event    @relation(fields: [eventId], references: [id], onDelete: Cascade)
+  functionId        String?                    // ties to a ceremony
+  time              String                     // e.g. "10:30 AM"
+  title             String
+  location          String?
+  responsiblePerson String?
+  duration          String?                    // e.g. "30 mins"
+  notes             String?  @db.Text
+  sortOrder         Int      @default(0)
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+
+  @@index([eventId])
+}
+
+// ─── MOOD BOARD (inspiration pins) ────────────────────────────────────────────
+
+model MoodBoardPin {
+  id        String   @id @default(uuid())
+  eventId   String
+  event     Event    @relation(fields: [eventId], references: [id], onDelete: Cascade)
+  imageUrl  String   @db.VarChar(2048)
+  caption   String?
+  category  String   @default("Other")
+  createdAt DateTime @default(now())
+
+  @@index([eventId])
+}
+
+// ─── GIFTS (gift tracker) ─────────────────────────────────────────────────────
+
+model Gift {
+  id              String   @id @default(uuid())
+  eventId         String
+  event           Event    @relation(fields: [eventId], references: [id], onDelete: Cascade)
+  fromName        String
+  fromRelation    String?
+  giftDescription String?
+  receivedDate    String?
+  estimatedValue  Decimal? @db.Decimal(12, 2)
+  thankYouSent    Boolean  @default(false)
+  notes           String?  @db.Text
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  @@index([eventId])
+}
+
+// ─── PHOTO WALL (private post-event album) ────────────────────────────────────
+
+model PhotoWallItem {
+  id        String   @id @default(uuid())
+  eventId   String
+  event     Event    @relation(fields: [eventId], references: [id], onDelete: Cascade)
+  url       String   @db.VarChar(2048)
+  caption   String?
+  category  String   @default("Ceremony")
+  createdAt DateTime @default(now())
+
+  @@index([eventId])
 }
