@@ -337,6 +337,75 @@ async function deleteMoodBoardPin(req, res) {
   return res.json({ ok: true });
 }
 
+/** Proxy Pinterest oEmbed so the browser avoids CORS; returns iframe HTML when Pinterest allows it */
+async function pinterestOEmbed(req, res) {
+  if (!(await getEventForUser(req))) return res.status(404).json({ ok: false, message: 'Event not found' });
+
+  let raw = String(req.query.url || '').trim();
+  if (!raw) return res.status(400).json({ ok: false, message: 'url query parameter is required' });
+  raw = raw.replace(/^http:\/\//i, 'https://');
+
+  let parsed;
+  try {
+    parsed = new URL(raw);
+  } catch {
+    return res.status(400).json({ ok: false, message: 'Invalid URL' });
+  }
+
+  if (parsed.protocol !== 'https:') {
+    return res.status(400).json({ ok: false, message: 'Invalid URL' });
+  }
+
+  const host = parsed.hostname.toLowerCase();
+  const allowed =
+    host === 'pin.it' ||
+    host === 'pinterest.com' ||
+    host === 'www.pinterest.com' ||
+    host.endsWith('.pinterest.com');
+  if (!allowed) return res.status(400).json({ ok: false, message: 'Only Pinterest URLs are allowed' });
+
+  const oembedUrl = `https://www.pinterest.com/oembed.json?url=${encodeURIComponent(parsed.href)}&maxwidth=700`;
+
+  try {
+    const r = await fetch(oembedUrl, {
+      redirect: 'follow',
+      headers: {
+        Accept: 'application/json',
+        'User-Agent': 'Mozilla/5.0 (compatible; Aamantran/1.0)',
+      },
+    });
+
+    if (!r.ok) {
+      return res.json({
+        ok: true,
+        html: null,
+        title: null,
+        boardUrl: parsed.href,
+        embedUnavailable: true,
+      });
+    }
+
+    const data = await r.json();
+    const html = typeof data.html === 'string' && data.html.trim() ? data.html.trim() : null;
+
+    return res.json({
+      ok: true,
+      html,
+      title: data.title || null,
+      boardUrl: parsed.href,
+      embedUnavailable: !html,
+    });
+  } catch {
+    return res.json({
+      ok: true,
+      html: null,
+      title: null,
+      boardUrl: parsed.href,
+      embedUnavailable: true,
+    });
+  }
+}
+
 // ═══════════════════════════════════════════════════════════════════════════════
 // GIFTS
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -444,7 +513,7 @@ module.exports = {
   // Timeline
   listTimeline, createTimelineEntry, updateTimelineEntry, deleteTimelineEntry,
   // Mood Board
-  listMoodBoard, createMoodBoardPin, deleteMoodBoardPin,
+  listMoodBoard, createMoodBoardPin, deleteMoodBoardPin, pinterestOEmbed,
   // Gifts
   listGifts, createGift, updateGift, deleteGift,
   // Photo Wall

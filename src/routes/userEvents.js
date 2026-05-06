@@ -97,6 +97,7 @@ router.delete('/:id/timeline/:eid',           p.deleteTimelineEntry);
 
 // ── Mood Board ───────────────────────────────────────────────────────────────
 router.get   ('/:id/moodboard',               p.listMoodBoard);
+router.get   ('/:id/pinterest-oembed',       p.pinterestOEmbed);
 router.post  ('/:id/moodboard', maybeUserMediaUpload, p.createMoodBoardPin);
 router.delete('/:id/moodboard/:mid',          p.deleteMoodBoardPin);
 
