@@ -106,11 +106,11 @@ async function sendTestEmail(to) {
   });
 }
 
-async function sendPurchaseConfirmationEmail({ to, templateName, amount, onboardingUrl }) {
+async function sendPurchaseConfirmationEmail({ to, templateName, amount, orderId, onboardingUrl }) {
   return sendMail({
     to,
-    subject: 'Your Aamantran purchase confirmation',
-    html: purchaseConfirmationHtml({ templateName, amount, onboardingUrl }),
+    subject: orderId ? `Order Confirmed — ${orderId}` : 'Your Aamantran purchase confirmation',
+    html: purchaseConfirmationHtml({ templateName, amount, orderId, onboardingUrl }),
   });
 }
 

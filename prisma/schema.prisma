@@ -397,6 +397,7 @@ model Media {
 
 model Payment {
   id                String   @id @default(uuid())
+  orderId           String?  @unique // AO-DDMMYY-HHMMSS-XXXX — human-readable reference, not used in any logic
   userId            String?
   user              User?    @relation(fields: [userId], references: [id])
   eventId           String?

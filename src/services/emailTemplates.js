@@ -62,12 +62,13 @@ function divider() {
 
 /* ── Templates ─────────────────────────────────────────── */
 
-function purchaseConfirmationHtml({ templateName, amount, onboardingUrl }) {
+function purchaseConfirmationHtml({ templateName, amount, orderId, onboardingUrl }) {
   const amountStr = `₹${(Number(amount || 0) / 100).toLocaleString('en-IN')}`;
   return wrapInLayout(`
     <p style="margin:0 0 6px;font-size:17px;font-weight:600;color:${BRAND};">Your celebration journey begins! 🎊</p>
     <p style="margin:0 0 20px;color:#5a3a3a;">Thank you for choosing Aamantran to craft your beautiful invitation. Your payment has been received and we're ready to make your day unforgettable.</p>
     ${infoCard(`
+      ${orderId ? infoRow('Order ID', `<span style="font-family:monospace;letter-spacing:1px;font-weight:700;color:${BRAND};">${orderId}</span>`) : ''}
       ${infoRow('Template', templateName)}
       ${infoRow('Amount Paid', amountStr)}
       ${infoRow('Status', '<span style="color:#2e7d4f;background:#e6f4ea;padding:2px 10px;border-radius:12px;font-size:12px;">✓ Confirmed</span>')}

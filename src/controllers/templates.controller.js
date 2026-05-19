@@ -2,7 +2,7 @@ const path         = require('path');
 const fs           = require('fs');
 const prisma       = require('../utils/prisma');
 const slugify      = require('../utils/slugify');
-const generateId   = require('../utils/generateId');
+const { generateId } = require('../utils/generateId');
 const {
   extractTemplateZip,
   snapshotDraftToVersion,

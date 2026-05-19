@@ -3,6 +3,7 @@ const crypto  = require('crypto');
 const bcrypt  = require('bcrypt');
 const { v4: uuidv4 } = require('uuid');
 const prisma  = require('../utils/prisma');
+const { generateOrderId } = require('../utils/generateId');
 const { checkoutLimiter, lookupLimiter } = require('../middleware/rateLimits');
 const {
   buildPaymentParams,
@@ -120,11 +121,12 @@ async function markPaymentPaid(payment, mihpayid) {
   ]);
 
   if (updated.customerEmail) {
-    const onboardingUrl = `${siteUrls.landingUrl()}/onboarding?paymentId=${encodeURIComponent(updated.id)}&slug=${encodeURIComponent(updated.template.slug)}&template=${encodeURIComponent(updated.template.name)}`;
+    const onboardingUrl = `${siteUrls.landingUrl()}/onboarding?paymentId=${encodeURIComponent(updated.id)}&slug=${encodeURIComponent(updated.template.slug)}&template=${encodeURIComponent(updated.template.name)}${updated.orderId ? `&orderId=${encodeURIComponent(updated.orderId)}` : ''}`;
     sendPurchaseConfirmationEmail({
       to: updated.customerEmail,
       templateName: updated.template.name,
       amount: updated.amount,
+      orderId: updated.orderId || null,
       onboardingUrl,
     }).catch(err => console.error('[Email Error]', err.message));
   }
@@ -188,11 +190,13 @@ router.post('/order', async (req, res) => {
     const gstAmount      = Math.round((taxableAmount * gstPercent) / 100);
     const finalAmount    = taxableAmount + gstAmount;
 
-    const txnid = uuidv4().replace(/-/g, '').slice(0, 25);
+    const txnid   = uuidv4().replace(/-/g, '').slice(0, 25);
+    const orderId = generateOrderId();
 
     const payment = await prisma.payment.create({
       data: {
         templateId:    template.id,
+        orderId,
         payuTxnId:     txnid,
         customerEmail: customerEmail ? String(customerEmail).trim().toLowerCase() : null,
         couponCode:    coupon.discountPct > 0 ? coupon.code : null,
@@ -201,12 +205,13 @@ router.post('/order', async (req, res) => {
         currency:      'INR',
         status:        'pending',
       },
-      select: { id: true },
+      select: { id: true, orderId: true },
     });
 
     if (DUMMY_PAYMENT_MODE) {
       return res.json({
         paymentId: payment.id,
+        orderId:   payment.orderId,
         amount:    finalAmount,
         dummy:     true,
         priceBreakup: { baseAmount: template.price, discountAmount, gstPercent, gstAmount, finalAmount, discountPct },
@@ -230,6 +235,7 @@ router.post('/order', async (req, res) => {
       payuUrl:    payuPaymentUrl(),
       payuParams,
       paymentId:  payment.id,
+      orderId:    payment.orderId,
       amount:     finalAmount,
       priceBreakup: { baseAmount: template.price, discountAmount, gstPercent, gstAmount, finalAmount, discountPct },
     });
@@ -266,7 +272,7 @@ router.post('/payu-success', async (req, res) => {
       await markPaymentPaid(payment, mihpayid);
     }
 
-    const onboardingUrl = `${siteUrls.landingUrl()}/onboarding?paymentId=${encodeURIComponent(payment.id)}&slug=${encodeURIComponent(payment.template.slug)}&template=${encodeURIComponent(payment.template.name)}`;
+    const onboardingUrl = `${siteUrls.landingUrl()}/onboarding?paymentId=${encodeURIComponent(payment.id)}&slug=${encodeURIComponent(payment.template.slug)}&template=${encodeURIComponent(payment.template.name)}${payment.orderId ? `&orderId=${encodeURIComponent(payment.orderId)}` : ''}`;
     return res.redirect(onboardingUrl);
   } catch (err) {
     console.error('[PayU] payu-success error:', err.message);
@@ -401,6 +407,7 @@ router.post('/payu-swap-success', async (req, res) => {
     if (mihpayid) {
       await prisma.payment.create({
         data: {
+          orderId:     generateOrderId(),
           userId:      swap.userId,
           eventId:     swap.eventId,
           templateId:  swap.toTemplateId,
@@ -455,11 +462,12 @@ router.post('/mock-success', async (req, res) => {
     });
 
     if (payment.customerEmail) {
-      const onboardingUrl = `${siteUrls.landingUrl()}/onboarding?paymentId=${encodeURIComponent(payment.id)}&slug=${encodeURIComponent(payment.template.slug)}&template=${encodeURIComponent(payment.template.name)}`;
+      const onboardingUrl = `${siteUrls.landingUrl()}/onboarding?paymentId=${encodeURIComponent(payment.id)}&slug=${encodeURIComponent(payment.template.slug)}&template=${encodeURIComponent(payment.template.name)}${payment.orderId ? `&orderId=${encodeURIComponent(payment.orderId)}` : ''}`;
       sendPurchaseConfirmationEmail({
         to: payment.customerEmail,
         templateName: payment.template.name,
         amount: payment.amount,
+        orderId: payment.orderId || null,
         onboardingUrl,
       }).catch(err => console.error('[Email Error]', err.message));
     }
