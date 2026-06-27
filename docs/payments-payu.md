@@ -145,4 +145,3 @@ Successful swap payment redirects or IPN callbacks:
 Admins call `POST /api/v1/transactions/:id/refund`. A refund requires
 `Payment.payuMihpayid`; otherwise the API returns `400`. The service calls PayU's
 `cancel_refund_transaction` command and then marks the payment `refunded`.
-

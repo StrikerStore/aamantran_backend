@@ -246,4 +246,3 @@ When R2 is enabled, files are stored under
 - video: `.mp4`, `.webm`, `.mov`
 
 Maximum upload size is 50 MB. The multipart field name must be `file`.
-

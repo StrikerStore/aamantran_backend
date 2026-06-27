@@ -134,4 +134,3 @@ backfilled before the server starts.
 - Version snapshots depend on `draft/template.zip`; if it is missing,
   snapshotting returns a conflict-style error.
 - R2 mode activates only when every required R2 environment variable is set.
-
