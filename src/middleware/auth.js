@@ -1,4 +1,5 @@
 const jwt = require('jsonwebtoken');
+const { adminJwtSecret } = require('../utils/authSecurity');
 
 function verifyAdminJWT(req, res, next) {
   const header = req.headers['authorization'] || '';
@@ -9,7 +10,7 @@ function verifyAdminJWT(req, res, next) {
   }
 
   try {
-    const payload = jwt.verify(token, process.env.JWT_SECRET, { issuer: 'aamantran:admin' });
+    const payload = jwt.verify(token, adminJwtSecret(), { issuer: 'aamantran:admin' });
     if (payload.role !== 'admin') {
       return res.status(403).json({ ok: false, message: 'Forbidden' });
     }

@@ -174,11 +174,25 @@ async function sendTemplateChangedEmail({ to, fromTemplateName, toTemplateName, 
   });
 }
 
+async function sendPasswordChangedEmail({ to, username }) {
+  return sendMail({
+    to,
+    subject: 'Your Aamantran password was changed',
+    html: `
+      <p>Hi${username ? ` ${username}` : ''},</p>
+      <p>The password for your Aamantran account was just changed.</p>
+      <p>If this was you, no action is needed. You have been signed out of all devices and can sign in with your new password.</p>
+      <p>If you did <strong>not</strong> make this change, please contact us immediately at <a href="mailto:support@aamantran.co">support@aamantran.co</a>.</p>
+      <p>— Team Aamantran</p>`,
+  });
+}
+
 module.exports = {
   sendMail,
   sendBalancePaymentEmail,
   sendTicketReplyEmail,
   sendAccountRecoveryCodeEmail,
+  sendPasswordChangedEmail,
   sendTestEmail,
   sendPurchaseConfirmationEmail,
   sendOnboardingReminderEmail,

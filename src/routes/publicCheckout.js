@@ -15,6 +15,7 @@ const {
   sendOnboardingCompleteEmail,
 } = require('../services/email.service');
 const siteUrls = require('../config/siteUrls');
+const { validateNewPassword } = require('../utils/authSecurity');
 
 const router = express.Router();
 router.use(checkoutLimiter);
@@ -530,8 +531,12 @@ router.post('/register', async (req, res) => {
         message: 'Username must be 3–32 characters: start with a letter or number; only letters, numbers, dots, underscores, hyphens',
       });
     }
-    if (String(password).length < 8) {
-      return res.status(400).json({ message: 'Password must be at least 8 characters' });
+    // Existing accounts link a purchase without a password; only validate when one is supplied.
+    if (password != null && password !== '') {
+      const passwordError = validateNewPassword(password);
+      if (passwordError) {
+        return res.status(400).json({ message: passwordError });
+      }
     }
 
     const payment = await prisma.payment.findUnique({
@@ -581,11 +586,14 @@ router.post('/register', async (req, res) => {
       return res.json({ ok: true, linked: true, eventCreated: true, dashboardUrl: siteUrls.coupleDashboardUrl() });
     }
 
-    if (!password || String(password).length < 8) {
-      return res.status(400).json({ message: 'Password must be at least 8 characters for a new account' });
+    const newAccountPasswordError = !password
+      ? 'Password is required for a new account'
+      : validateNewPassword(password);
+    if (newAccountPasswordError) {
+      return res.status(400).json({ message: newAccountPasswordError });
     }
 
-    const passwordHash = await bcrypt.hash(String(password), 10);
+    const passwordHash = await bcrypt.hash(String(password), 12);
     const user = await prisma.user.create({
       data: {
         email:        emailLower,
