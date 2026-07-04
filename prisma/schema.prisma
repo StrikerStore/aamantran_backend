@@ -683,3 +683,24 @@ model WebsiteDailyStat {
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
 }
+
+// ─── BLOG (admin-managed content marketing) ───────────────────────────────────
+
+model BlogPost {
+  id              String    @id @default(uuid())
+  slug            String    @unique
+  title           String
+  excerpt         String?   @db.Text
+  coverImageUrl   String?   @db.VarChar(2048)   // R2 URL (blog/{slug}/cover.ext)
+  content         String    @db.LongText        // markdown
+  metaTitle       String?                       // SEO title override
+  metaDescription String?   @db.Text            // SEO description override
+  tags            String?                       // comma-separated: "wedding, invitations, tips"
+  author          String    @default("Aamantran Team")
+  status          String    @default("draft")   // draft | published
+  publishedAt     DateTime?
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+
+  @@index([status, publishedAt])
+}

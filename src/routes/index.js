@@ -54,5 +54,8 @@ router.use('/api/checkout',   publicCheckoutRoutes);
 router.use('/api/public',     publicInviteRoutes);
 router.use('/api/contact',   require('./contact'));
 router.use('/api/track',     require('./track')); // First-party website analytics beacon
+router.use('/api/v1/blog',   require('./blog'));         // Admin blog CRUD
+router.use('/api/blog',      require('./publicBlog'));    // Public blog (published posts)
+
 
 module.exports = router;
