@@ -289,9 +289,32 @@ function postEventThankYouHtml({ dashboardUrl }) {
   });
 }
 
+function abandonedCheckoutHtml({ templateName, checkoutUrl }) {
+  return wrapInLayout(`
+    <p style="margin:0 0 6px;font-size:17px;font-weight:600;color:${BRAND};">Your invitation is still waiting 💌</p>
+    <p style="margin:0 0 20px;color:#5a3a3a;">You were just one step away from getting <strong>${templateName}</strong> — your payment didn't go through, but nothing is lost. Pick up right where you left off.</p>
+    ${divider()}
+    <p style="margin:0 0 6px;font-size:14px;color:#5a3a3a;"><strong>Why couples choose Aamantran:</strong></p>
+    <ul style="margin:10px 0 20px;padding-left:20px;color:#5a3a3a;font-size:14px;line-height:2;">
+      <li>Live within 30 minutes — share on WhatsApp tonight</li>
+      <li>RSVP tracking for every function, one elegant link</li>
+      <li>One-time payment, edit anytime, no hidden fees</li>
+    </ul>
+    <div style="text-align:center;">
+      ${btn('Complete My Purchase', checkoutUrl)}
+    </div>
+    <p style="margin:20px 0 0;font-size:12px;color:#8a7a6f;text-align:center;">Questions? Just reply to this email or WhatsApp us at +91 91747 73644.</p>
+  `, {
+    accentEmoji: '✨',
+    heroTitle: 'Finish Your Invitation',
+    heroSubtitle: 'Your chosen template is reserved and ready',
+  });
+}
+
 module.exports = {
   purchaseConfirmationHtml,
   onboardingReminderHtml,
+  abandonedCheckoutHtml,
   onboardingCompleteHtml,
   invitationPublishedHtml,
   rsvpMilestoneHtml,

@@ -415,6 +415,7 @@ model Payment {
   isOnboarded       Boolean  @default(false)
   onboardedAt       DateTime?
   reminderSentAt    DateTime?
+  abandonedEmailSentAt DateTime? // abandoned-checkout recovery email (pending payments)
   createdAt         DateTime @default(now())
 }
 
@@ -629,4 +630,56 @@ model PhotoWallItem {
   createdAt DateTime @default(now())
 
   @@index([eventId])
+}
+
+// ─── WEBSITE ANALYTICS (first-party tracking for the marketing site) ──────────
+
+model WebsiteSession {
+  id          String   @id @db.VarChar(64)   // client-generated UUID (anonymous, no PII)
+  firstSeenAt DateTime @default(now())
+  lastSeenAt  DateTime @default(now())
+  // First-touch attribution — set on session create, never updated
+  referrer    String?  @db.VarChar(255)      // referrer hostname only, e.g. "google.com"
+  utmSource   String?  @db.VarChar(128)
+  utmMedium   String?  @db.VarChar(128)
+  utmCampaign String?  @db.VarChar(128)
+  deviceType  String?  @db.VarChar(16)       // mobile|tablet|desktop
+  browser     String?  @db.VarChar(64)
+  os          String?  @db.VarChar(64)
+  country     String?  @db.VarChar(64)       // from Cloudflare cf-ipcountry header
+  region      String?  @db.VarChar(128)      // from cf-region (needs CF "visitor location headers" transform)
+  city        String?  @db.VarChar(128)      // from cf-ipcity
+  pageViews   Int      @default(0)
+  events      WebsiteEvent[]
+
+  @@index([firstSeenAt])
+  @@index([lastSeenAt])
+}
+
+model WebsiteEvent {
+  id        String   @id @default(uuid())
+  sessionId String   @db.VarChar(64)
+  session   WebsiteSession @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+  type      String   @db.VarChar(32)  // pageview|view_template|initiate_checkout|purchase|register_complete
+  path      String   @db.VarChar(512)
+  metadata  Json?
+  createdAt DateTime @default(now())
+
+  @@index([createdAt])
+  @@index([type, createdAt])
+  @@index([sessionId])
+}
+
+// One row per completed day — survives the 90-day raw-event prune.
+model WebsiteDailyStat {
+  id          String   @id @default(uuid())
+  date        DateTime @unique @db.Date
+  visitors    Int      @default(0)   // sessions that started that day
+  pageViews   Int      @default(0)
+  sources     Json?    // { "(direct)": 40, "google.com": 12, ... }
+  devices     Json?    // { mobile, tablet, desktop }
+  countries   Json?    // { IN: 50, US: 2 }
+  conversions Json?    // { view_template, initiate_checkout, purchase, register_complete }
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
 }

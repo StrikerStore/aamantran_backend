@@ -2,6 +2,7 @@ const nodemailer = require('nodemailer');
 const {
   purchaseConfirmationHtml,
   onboardingReminderHtml,
+  abandonedCheckoutHtml,
   onboardingCompleteHtml,
   invitationPublishedHtml,
   rsvpMilestoneHtml,
@@ -122,6 +123,14 @@ async function sendOnboardingReminderEmail({ to, onboardingUrl }) {
   });
 }
 
+async function sendAbandonedCheckoutEmail({ to, templateName, checkoutUrl }) {
+  return sendMail({
+    to,
+    subject: 'Your wedding invitation is one step away ✨',
+    html: abandonedCheckoutHtml({ templateName, checkoutUrl }),
+  });
+}
+
 async function sendOnboardingCompleteEmail({ to, username, dashboardUrl }) {
   return sendMail({
     to,
@@ -182,7 +191,7 @@ async function sendPasswordChangedEmail({ to, username }) {
       <p>Hi${username ? ` ${username}` : ''},</p>
       <p>The password for your Aamantran account was just changed.</p>
       <p>If this was you, no action is needed. You have been signed out of all devices and can sign in with your new password.</p>
-      <p>If you did <strong>not</strong> make this change, please contact us immediately at <a href="mailto:support@aamantran.co">support@aamantran.co</a>.</p>
+      <p>If you did <strong>not</strong> make this change, please contact us immediately at <a href="mailto:aamantran@plexzuu.com">aamantran@plexzuu.com</a>.</p>
       <p>— Team Aamantran</p>`,
   });
 }
@@ -196,6 +205,7 @@ module.exports = {
   sendTestEmail,
   sendPurchaseConfirmationEmail,
   sendOnboardingReminderEmail,
+  sendAbandonedCheckoutEmail,
   sendOnboardingCompleteEmail,
   sendInvitationPublishedEmail,
   sendRsvpMilestoneEmail,

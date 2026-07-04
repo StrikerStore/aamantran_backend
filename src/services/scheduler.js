@@ -5,8 +5,10 @@ const {
   sendRsvpMilestoneEmail,
   sendEventCountdownEmail,
   sendPostEventThankYouEmail,
+  sendAbandonedCheckoutEmail,
 } = require('./email.service');
 const siteUrls = require('../config/siteUrls');
+const { runWebsiteAnalyticsRollupJob, pruneOldWebsiteData } = require('./analyticsRollup.service');
 
 function toMidnight(d) {
   const out = new Date(d);
@@ -35,6 +37,42 @@ async function runOnboardingReminderJob() {
     const onboardingUrl = `${siteUrls.landingUrl()}/onboarding?paymentId=${encodeURIComponent(p.id)}&slug=${encodeURIComponent(p.template.slug)}&template=${encodeURIComponent(p.template.name)}`;
     await sendOnboardingReminderEmail({ to: p.customerEmail, onboardingUrl }).catch(err => console.error('[Email Error] sendOnboardingReminderEmail:', err.message));
     await prisma.payment.update({ where: { id: p.id }, data: { reminderSentAt: new Date() } });
+  }
+}
+
+async function runAbandonedCheckoutJob() {
+  // Pending payments 2–72h old: PayU was never completed. The 72h floor also
+  // prevents a first deploy from mass-emailing ancient pending rows.
+  const now = Date.now();
+  const payments = await prisma.payment.findMany({
+    where: {
+      status: 'pending',
+      abandonedEmailSentAt: null,
+      customerEmail: { not: null },
+      createdAt: {
+        lte: new Date(now - 2 * 60 * 60 * 1000),
+        gte: new Date(now - 72 * 60 * 60 * 1000),
+      },
+    },
+    include: { template: { select: { slug: true, name: true } } },
+    take: 200,
+  });
+  for (const p of payments) {
+    if (!p.customerEmail) continue;
+    // Skip anyone who completed a purchase (e.g. retried checkout on a new row)
+    const alreadyPaid = await prisma.payment.findFirst({
+      where: { customerEmail: p.customerEmail, status: 'paid' },
+      select: { id: true },
+    });
+    // Mark first so a send failure can't cause repeat emails on the next run
+    await prisma.payment.update({ where: { id: p.id }, data: { abandonedEmailSentAt: new Date() } });
+    if (alreadyPaid) continue;
+    const checkoutUrl = `${siteUrls.landingUrl()}/checkout/${encodeURIComponent(p.template.slug)}`;
+    await sendAbandonedCheckoutEmail({
+      to: p.customerEmail,
+      templateName: p.template.name,
+      checkoutUrl,
+    }).catch(err => console.error('[Email Error] sendAbandonedCheckoutEmail:', err.message));
   }
 }
 
@@ -98,11 +136,19 @@ async function runDateBasedEmailJob() {
 }
 
 cron.schedule('0 * * * *', () => { runOnboardingReminderJob().catch(() => {}); });
+cron.schedule('15 * * * *', () => { runAbandonedCheckoutJob().catch(() => {}); });
 cron.schedule('*/30 * * * *', () => { runRsvpMilestoneJob().catch(() => {}); });
 cron.schedule('0 9 * * *', () => { runDateBasedEmailJob().catch(() => {}); });
+// Website analytics: roll completed days into WebsiteDailyStat, then prune raw rows past 90 days
+cron.schedule('30 2 * * *', () => {
+  runWebsiteAnalyticsRollupJob()
+    .then(() => pruneOldWebsiteData())
+    .catch((err) => console.error('[analytics] rollup job failed:', err.message));
+});
 
 module.exports = {
   runOnboardingReminderJob,
+  runAbandonedCheckoutJob,
   runRsvpMilestoneJob,
   runDateBasedEmailJob,
 };

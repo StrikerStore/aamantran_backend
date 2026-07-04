@@ -37,6 +37,7 @@ router.use('/api/v1/tickets',      ticketRoutes);
 router.use('/api/v1/coupons',      couponRoutes);
 router.use('/api/v1/assets',       globalAssetsRoutes);
 router.use('/api/v1/reviews',      adminReviewRoutes);
+router.use('/api/v1/analytics',    require('./adminAnalytics'));
 router.use('/api/assets',          globalAssetsRoutes); // Public GET access
 
 // ── User Dashboard API (JWT-protected, role: user) ───────────────────
@@ -52,5 +53,6 @@ router.use('/api/reviews',    publicTemplateRoutes); // reuse, separate handler
 router.use('/api/checkout',   publicCheckoutRoutes);
 router.use('/api/public',     publicInviteRoutes);
 router.use('/api/contact',   require('./contact'));
+router.use('/api/track',     require('./track')); // First-party website analytics beacon
 
 module.exports = router;

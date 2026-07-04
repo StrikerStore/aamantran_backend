@@ -54,6 +54,16 @@ const lookupLimiter = rateLimit({
   message: { message: 'Too many lookups. Please try again later.' },
 });
 
+// Website analytics beacon — every visitor fires this on each page view,
+// so the window is short and the cap generous per IP.
+const trackLimiter = rateLimit({
+  windowMs: 60 * 1000,
+  max: Number(process.env.RATE_LIMIT_TRACK_MAX || 120),
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { ok: false },
+});
+
 module.exports = {
   globalLimiter,
   authLoginLimiter,
@@ -61,4 +71,5 @@ module.exports = {
   checkoutLimiter,
   publicInviteLimiter,
   lookupLimiter,
+  trackLimiter,
 };
