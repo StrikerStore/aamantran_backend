@@ -16,4 +16,8 @@ const EVENT_TYPES = [
 
 const LANGUAGE_CODES = ['en', 'hi', 'gu', 'ur', 'pa', 'mr', 'kn', 'te', 'ml', 'ta'];
 
-module.exports = { COMMUNITY_VALUES, EVENT_TYPES, LANGUAGE_CODES };
+// DPDP: bump whenever /privacy or /terms changes materially — stored on
+// Payment/User rows as a record of which notice version was consented to.
+const POLICY_VERSION = '2026-07-08';
+
+module.exports = { COMMUNITY_VALUES, EVENT_TYPES, LANGUAGE_CODES, POLICY_VERSION };

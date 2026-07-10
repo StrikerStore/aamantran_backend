@@ -16,6 +16,7 @@ const {
 } = require('../services/email.service');
 const siteUrls = require('../config/siteUrls');
 const { validateNewPassword } = require('../utils/authSecurity');
+const { POLICY_VERSION } = require('../lib/constants');
 
 const router = express.Router();
 router.use(checkoutLimiter);
@@ -174,8 +175,12 @@ router.post('/coupon-preview', async (req, res) => {
 // POST /api/checkout/order — creates pending payment, returns PayU form params
 router.post('/order', async (req, res) => {
   try {
-    const { templateSlug, couponCode, customerEmail, customerContact } = req.body || {};
+    const { templateSlug, couponCode, customerEmail, customerContact, consent, marketingOptIn } = req.body || {};
     if (!templateSlug) return res.status(400).json({ message: 'templateSlug is required' });
+    // DPDP: specific, informed consent must be recorded before personal data is processed
+    if (consent !== true) {
+      return res.status(400).json({ message: 'Please accept the Terms of Service and Privacy Policy to continue' });
+    }
 
     const template = await prisma.template.findUnique({
       where: { slug: templateSlug, isActive: true },
@@ -205,6 +210,9 @@ router.post('/order', async (req, res) => {
         amount:        finalAmount,
         currency:      'INR',
         status:        'pending',
+        consentAt:     new Date(),
+        policyVersion: POLICY_VERSION,
+        marketingOptIn: marketingOptIn === true,
       },
       select: { id: true, orderId: true },
     });
@@ -600,6 +608,9 @@ router.post('/register', async (req, res) => {
         username:     usernameNorm,
         phone:        String(contact).trim(),
         passwordHash,
+        // DPDP: carry the checkout consent record onto the account
+        consentAt:     payment.consentAt || new Date(),
+        policyVersion: payment.policyVersion || POLICY_VERSION,
       },
       select: { id: true },
     });

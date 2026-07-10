@@ -161,6 +161,8 @@ model User {
   username     String?  @unique // global login handle (only display identifier for the account)
   passwordHash String
   phone        String?
+  consentAt     DateTime? // DPDP: when the user accepted Terms + Privacy Policy
+  policyVersion String?   // DPDP: privacy-policy version accepted (e.g. "2026-07-08")
   createdAt    DateTime @default(now())
 
   events        Event[]
@@ -200,6 +202,10 @@ model Event {
   lastMilestoneNotified Int?
   countdownEmailSent Int?
   postEventEmailSent Boolean @default(false)
+  // DPDP guest-data retention: warning email sent ~88 days after expiry; guest
+  // data (guests, RSVPs, wishes, per-guest analytics) erased ≥48h later at day 90.
+  guestDataWarningSentAt DateTime?
+  guestDataDeletedAt     DateTime?
 
   /// Optional social / web links (icons live in template HTML; URLs from dashboard)
   instagramUrl      String? @db.VarChar(2048)
@@ -416,6 +422,9 @@ model Payment {
   onboardedAt       DateTime?
   reminderSentAt    DateTime?
   abandonedEmailSentAt DateTime? // abandoned-checkout recovery email (pending payments)
+  consentAt         DateTime? // DPDP: when Terms + Privacy Policy were accepted at checkout
+  policyVersion     String?   // DPDP: privacy-policy version accepted
+  marketingOptIn    Boolean  @default(false) // DPDP: consent to reminder/offer emails (abandoned checkout)
   createdAt         DateTime @default(now())
 }
 
@@ -630,6 +639,21 @@ model PhotoWallItem {
   createdAt DateTime @default(now())
 
   @@index([eventId])
+}
+
+// ─── AUTH AUDIT LOG (DPDP Rule 6(c)/(e): security logs, retained ≥1 year) ─────
+
+model AuthAuditLog {
+  id        String   @id @default(uuid())
+  event     String   @db.VarChar(64)   // user_login_success|user_login_failed|recovery_code_sent|account_deleted|…
+  ip        String?  @db.VarChar(64)
+  userAgent String?  @db.VarChar(160)
+  userId    String?                    // not a relation — must survive account deletion
+  details   Json?
+  createdAt DateTime @default(now())
+
+  @@index([createdAt])
+  @@index([event, createdAt])
 }
 
 // ─── WEBSITE ANALYTICS (first-party tracking for the marketing site) ──────────

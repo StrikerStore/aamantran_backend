@@ -3,6 +3,8 @@ const multer  = require('multer');
 const path    = require('path');
 const verifyUserJWT = require('../middleware/userAuth');
 const c = require('../controllers/userDashboard.controller');
+const { deleteAccount } = require('../controllers/accountDeletion.controller');
+const { authLoginLimiter } = require('../middleware/rateLimits');
 
 const router = express.Router();
 
@@ -19,6 +21,9 @@ const reviewImageUpload = multer({
 
 // ── Profile (protected) ───────────────────────────────────────────────────────
 router.patch('/profile', verifyUserJWT, c.updateProfile);
+
+// ── Account erasure (DPDP right to erasure; password re-confirmation) ─────────
+router.delete('/me', authLoginLimiter, verifyUserJWT, deleteAccount);
 
 // ── Review (protected) ────────────────────────────────────────────────────────
 router.post('/review', verifyUserJWT, reviewImageUpload.single('couplePhoto'), c.submitReview);

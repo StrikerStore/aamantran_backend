@@ -289,7 +289,7 @@ function postEventThankYouHtml({ dashboardUrl }) {
   });
 }
 
-function abandonedCheckoutHtml({ templateName, checkoutUrl }) {
+function abandonedCheckoutHtml({ templateName, checkoutUrl, unsubscribeUrl }) {
   return wrapInLayout(`
     <p style="margin:0 0 6px;font-size:17px;font-weight:600;color:${BRAND};">Your invitation is still waiting 💌</p>
     <p style="margin:0 0 20px;color:#5a3a3a;">You were just one step away from getting <strong>${templateName}</strong> — your payment didn't go through, but nothing is lost. Pick up right where you left off.</p>
@@ -304,10 +304,82 @@ function abandonedCheckoutHtml({ templateName, checkoutUrl }) {
       ${btn('Complete My Purchase', checkoutUrl)}
     </div>
     <p style="margin:20px 0 0;font-size:12px;color:#8a7a6f;text-align:center;">Questions? Just reply to this email or WhatsApp us at +91 91747 73644.</p>
+    ${unsubscribeUrl ? `<p style="margin:12px 0 0;font-size:11px;color:#b0a094;text-align:center;">Don't want these reminders? <a href="${unsubscribeUrl}" style="color:#b0a094;text-decoration:underline;">Unsubscribe</a></p>` : ''}
   `, {
     accentEmoji: '✨',
     heroTitle: 'Finish Your Invitation',
     heroSubtitle: 'Your chosen template is reserved and ready',
+  });
+}
+
+function guestDataDeletionWarningHtml({ deleteDateStr, exportUrl, dashboardUrl }) {
+  return wrapInLayout(`
+    <p style="margin:0 0 6px;font-size:17px;font-weight:600;color:${BRAND};">Your guest data is scheduled for deletion 🗓️</p>
+    <p style="margin:0 0 16px;color:#5a3a3a;">As promised in our Privacy Policy, guest information is automatically deleted <strong>90 days after your invitation expires</strong>. Your event's guest data will be permanently deleted on or after:</p>
+    ${infoCard(`
+      ${infoRow('Deletion date', `<span style="color:${BRAND};font-weight:700;">${deleteDateStr}</span>`)}
+      ${infoRow('What gets deleted', 'Guest list, RSVP responses, guest wishes, per-guest activity')}
+      ${infoRow('What stays', 'Your account, invitation design, photos and payment history')}
+    `)}
+    <p style="margin:0 0 6px;color:#5a3a3a;font-size:14px;">Want to keep a copy? Download your guest list and RSVP report from your dashboard before the deletion date.</p>
+    <div style="text-align:center;">
+      ${btn('Download Guest Data', exportUrl || dashboardUrl)}
+    </div>
+    ${divider()}
+    <p style="margin:0;font-size:12px;color:#8a7a6f;text-align:center;">This is a one-time privacy notice required under India's Digital Personal Data Protection rules. Questions? Just reply to this email.</p>
+  `, {
+    accentEmoji: '🔐',
+    heroTitle: 'Guest Data Deletion Notice',
+    heroSubtitle: 'Export your guest list before it is erased',
+  });
+}
+
+/**
+ * One-time DPDP notice to existing customers (Act s.5(2)): describes the
+ * personal data we hold and why, their rights, and the upcoming guest-data
+ * retention sweep. Sent via scripts/send-dpdp-notice.js.
+ */
+function dpdpNoticeHtml({ privacyUrl, dashboardUrl }) {
+  return wrapInLayout(`
+    <p style="margin:0 0 6px;font-size:17px;font-weight:600;color:${BRAND};">An important update about your data 🛡️</p>
+    <p style="margin:0 0 16px;color:#5a3a3a;">India's <strong>Digital Personal Data Protection Act (DPDP)</strong> gives you new rights over your personal data, and asks companies like us to clearly tell you what we hold and why. Here it is, in plain language.</p>
+
+    <p style="margin:0 0 6px;font-size:14px;color:#5a3a3a;"><strong>What we hold about you:</strong></p>
+    <ul style="margin:6px 0 16px;padding-left:20px;color:#5a3a3a;font-size:14px;line-height:1.9;">
+      <li><strong>Account details</strong> — username, email, phone number (to run your account)</li>
+      <li><strong>Invitation content</strong> — names, photos, event and venue details (to build and host your invitation)</li>
+      <li><strong>Guest data</strong> — guest lists, RSVPs and wishes you collected (shown only to you)</li>
+      <li><strong>Order records</strong> — what you purchased and when (required by tax law; we never store card or UPI details)</li>
+    </ul>
+    <p style="margin:0 0 16px;color:#5a3a3a;font-size:14px;">We never sell your data, and we don't send marketing emails without your consent.</p>
+
+    ${divider()}
+
+    <p style="margin:0 0 6px;font-size:14px;color:#5a3a3a;"><strong>Your rights:</strong> you can access, correct or delete your data, withdraw consent, nominate someone to act for you, or raise a grievance — just email <a href="mailto:${SUPPORT}" style="color:${BRAND};">${SUPPORT}</a> from your registered email. Most details can also be edited directly in your dashboard, which now includes a self-serve <strong>Delete Account</strong> option under Settings.</p>
+
+    <p style="margin:16px 0 6px;font-size:14px;color:#5a3a3a;"><strong>One change to note:</strong> as promised in our Privacy Policy, guest data (guest lists, RSVPs, wishes) is automatically deleted <strong>90 days after your invitation expires</strong>. If your event has already passed, you'll receive a separate email at least 48 hours before any deletion, with a link to download your guest list first.</p>
+
+    <div style="text-align:center;">
+      ${btn('Read the Updated Privacy Policy', privacyUrl)}
+    </div>
+    <p style="margin:20px 0 0;font-size:12px;color:#8a7a6f;text-align:center;">No action is needed — your account and invitations are unaffected. You can export your guest data anytime from <a href="${dashboardUrl}" style="color:#8a7a6f;">your dashboard</a>.</p>
+  `, {
+    accentEmoji: '🛡️',
+    heroTitle: 'Your Data, Your Rights',
+    heroSubtitle: 'What we hold, why we hold it, and how you stay in control',
+  });
+}
+
+function accountDeletedHtml({ username }) {
+  return wrapInLayout(`
+    <p style="margin:0 0 6px;font-size:17px;font-weight:600;color:${BRAND};">Your account has been deleted</p>
+    <p style="margin:0 0 16px;color:#5a3a3a;">Hi${username ? ` ${username}` : ''}, as requested, your Aamantran account and the personal data associated with it — your events, guest lists, RSVPs, photos and profile — have been permanently deleted.</p>
+    <p style="margin:0 0 16px;color:#5a3a3a;font-size:14px;">Payment records are retained in de-identified form only where Indian tax law requires it. If you did <strong>not</strong> request this deletion, contact us immediately by replying to this email.</p>
+    <p style="margin:0;color:#5a3a3a;font-size:14px;">Thank you for celebrating with us. You are always welcome back. 🌸</p>
+  `, {
+    accentEmoji: '👋',
+    heroTitle: 'Account Deleted',
+    heroSubtitle: 'Your personal data has been erased',
   });
 }
 
@@ -321,4 +393,7 @@ module.exports = {
   eventCountdownHtml,
   postEventThankYouHtml,
   templateChangedHtml,
+  guestDataDeletionWarningHtml,
+  accountDeletedHtml,
+  dpdpNoticeHtml,
 };

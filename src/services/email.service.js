@@ -9,6 +9,9 @@ const {
   eventCountdownHtml,
   postEventThankYouHtml,
   templateChangedHtml,
+  guestDataDeletionWarningHtml,
+  accountDeletedHtml,
+  dpdpNoticeHtml,
 } = require('./emailTemplates');
 
 let _transport = null;
@@ -123,11 +126,35 @@ async function sendOnboardingReminderEmail({ to, onboardingUrl }) {
   });
 }
 
-async function sendAbandonedCheckoutEmail({ to, templateName, checkoutUrl }) {
+async function sendAbandonedCheckoutEmail({ to, templateName, checkoutUrl, unsubscribeUrl }) {
   return sendMail({
     to,
     subject: 'Your wedding invitation is one step away ✨',
-    html: abandonedCheckoutHtml({ templateName, checkoutUrl }),
+    html: abandonedCheckoutHtml({ templateName, checkoutUrl, unsubscribeUrl }),
+  });
+}
+
+async function sendGuestDataDeletionWarningEmail({ to, deleteDateStr, exportUrl, dashboardUrl }) {
+  return sendMail({
+    to,
+    subject: 'Action needed: your guest data will be deleted soon',
+    html: guestDataDeletionWarningHtml({ deleteDateStr, exportUrl, dashboardUrl }),
+  });
+}
+
+async function sendDpdpNoticeEmail({ to, privacyUrl, dashboardUrl }) {
+  return sendMail({
+    to,
+    subject: 'Your data & your rights — an update from Aamantran',
+    html: dpdpNoticeHtml({ privacyUrl, dashboardUrl }),
+  });
+}
+
+async function sendAccountDeletedEmail({ to, username }) {
+  return sendMail({
+    to,
+    subject: 'Your Aamantran account has been deleted',
+    html: accountDeletedHtml({ username }),
   });
 }
 
@@ -212,4 +239,7 @@ module.exports = {
   sendEventCountdownEmail,
   sendPostEventThankYouEmail,
   sendTemplateChangedEmail,
+  sendGuestDataDeletionWarningEmail,
+  sendAccountDeletedEmail,
+  sendDpdpNoticeEmail,
 };

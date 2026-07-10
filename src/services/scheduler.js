@@ -9,6 +9,8 @@ const {
 } = require('./email.service');
 const siteUrls = require('../config/siteUrls');
 const { runWebsiteAnalyticsRollupJob, pruneOldWebsiteData } = require('./analyticsRollup.service');
+const { runGuestDataRetentionJob, pruneAuthAuditLogs } = require('./dataRetention.service');
+const { buildUnsubscribeUrl } = require('../utils/unsubscribe');
 
 function toMidnight(d) {
   const out = new Date(d);
@@ -49,6 +51,8 @@ async function runAbandonedCheckoutJob() {
       status: 'pending',
       abandonedEmailSentAt: null,
       customerEmail: { not: null },
+      // DPDP: recovery emails are marketing — only send to customers who opted in at checkout
+      marketingOptIn: true,
       createdAt: {
         lte: new Date(now - 2 * 60 * 60 * 1000),
         gte: new Date(now - 72 * 60 * 60 * 1000),
@@ -72,6 +76,7 @@ async function runAbandonedCheckoutJob() {
       to: p.customerEmail,
       templateName: p.template.name,
       checkoutUrl,
+      unsubscribeUrl: buildUnsubscribeUrl(p.customerEmail),
     }).catch(err => console.error('[Email Error] sendAbandonedCheckoutEmail:', err.message));
   }
 }
@@ -144,6 +149,13 @@ cron.schedule('30 2 * * *', () => {
   runWebsiteAnalyticsRollupJob()
     .then(() => pruneOldWebsiteData())
     .catch((err) => console.error('[analytics] rollup job failed:', err.message));
+});
+// DPDP retention: warn owners ~day 88, erase guest data ≥90 days after invite expiry;
+// prune auth audit logs past the 1-year statutory retention window
+cron.schedule('15 3 * * *', () => {
+  runGuestDataRetentionJob()
+    .then(() => pruneAuthAuditLogs())
+    .catch((err) => console.error('[retention] job failed:', err.message));
 });
 
 module.exports = {
