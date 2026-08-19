@@ -125,10 +125,12 @@ Handlebars.registerHelper('has_media_slot', function (slots, key) {
 
 // ─── Core rendering ──────────────────────────────────────────────────────────
 
+// .ico only, on purpose: browsers prefer an SVG icon whenever one is declared,
+// regardless of link order, so listing /favicon.svg here would always win.
+// public/favicon.svg is still served if a link for it is ever wanted back.
 const FAVICON_TAGS =
-  '<link rel="icon" href="/favicon.svg" type="image/svg+xml">' +
-  '<link rel="icon" href="/favicon.ico" sizes="any">' +
-  '<link rel="shortcut icon" href="/favicon.ico">';
+  '<link rel="icon" href="/favicon.ico" type="image/x-icon" sizes="any">' +
+  '<link rel="shortcut icon" href="/favicon.ico" type="image/x-icon">';
 
 /**
  * Give invite/demo pages the Aamantran tab icon. Templates rarely ship one, so
