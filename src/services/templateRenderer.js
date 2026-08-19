@@ -125,6 +125,34 @@ Handlebars.registerHelper('has_media_slot', function (slots, key) {
 
 // ─── Core rendering ──────────────────────────────────────────────────────────
 
+const FAVICON_TAGS =
+  '<link rel="icon" href="/favicon.svg" type="image/svg+xml">' +
+  '<link rel="icon" href="/favicon.ico" sizes="any">' +
+  '<link rel="shortcut icon" href="/favicon.ico">';
+
+/**
+ * Give invite/demo pages the Aamantran tab icon. Templates rarely ship one, so
+ * without this the browser requests /favicon.ico on the API origin and 404s.
+ * A template that declares its own icon keeps it — we never override.
+ */
+function injectFavicon(html) {
+  if (!html) return html;
+  if (/<link[^>]+rel\s*=\s*["']?[^"'>]*\bicon\b/i.test(html)) return html;
+
+  // Prefer the end of <head> so the template's own <meta charset> stays first.
+  const headClose = html.toLowerCase().indexOf('</head>');
+  if (headClose !== -1) {
+    return html.slice(0, headClose) + FAVICON_TAGS + html.slice(headClose);
+  }
+
+  const headOpen = html.match(/<head[^>]*>/i);
+  if (headOpen) {
+    const at = headOpen.index + headOpen[0].length;
+    return html.slice(0, at) + FAVICON_TAGS + html.slice(at);
+  }
+  return FAVICON_TAGS + html;
+}
+
 /**
  * Render a template with the given data object.
  * The template HTML uses {{variable}} tokens (Handlebars syntax).
@@ -144,7 +172,7 @@ async function renderTemplate(folderName, data, options = {}) {
 
   // Compile and render
   const template = Handlebars.compile(html, { noEscape: true });
-  const rendered = template(data);
+  const rendered = injectFavicon(template(data));
   if (options.aamantranContext) {
     return injectAamantranRuntime(rendered, options.aamantranContext);
   }

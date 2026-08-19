@@ -758,14 +758,22 @@ async function exportGuestsCSV(req, res) {
     include: { rsvps: { include: { function: { select: { name: true } } } } },
   });
 
+  // Guest-supplied values are stored as plain text, so any field may contain a
+  // double quote — every cell has to be quote-doubled, not just the message.
+  const cell = (value) => `"${String(value ?? '').replace(/"/g, '""')}"`;
+  const row = (values) => values.map(cell).join(',');
+
   const lines = ['Name,Phone,Email,Side,Tags,Function,Attending,+1s,Meal,Message'];
   for (const g of guests) {
     if (g.rsvps.length === 0) {
-      lines.push(`"${g.name}","${g.phone || ''}","${g.email || ''}","${g.side || ''}","${g.tags || ''}","—","Pending","0","",""`);
+      lines.push(row([g.name, g.phone || '', g.email || '', g.side || '', g.tags || '', '—', 'Pending', '0', '', '']));
     } else {
       for (const r of g.rsvps) {
         const attending = r.attending === true ? 'Yes' : r.attending === false ? 'No' : 'Pending';
-        lines.push(`"${g.name}","${g.phone || ''}","${g.email || ''}","${g.side || ''}","${g.tags || ''}","${r.function.name}","${attending}","${r.plusCount}","${r.mealPreference || ''}","${(r.message || '').replace(/"/g, '""')}"`);
+        lines.push(row([
+          g.name, g.phone || '', g.email || '', g.side || '', g.tags || '',
+          r.function.name, attending, r.plusCount, r.mealPreference || '', r.message || '',
+        ]));
       }
     }
   }

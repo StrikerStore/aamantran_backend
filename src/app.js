@@ -168,6 +168,15 @@ if (!storage.useObjectStorage()) {
   app.use('/uploads', express.static(uploadsPath));
 }
 
+// Brand favicons for HTML served off this origin (live invites at /i/:slug, demos).
+// Mounted unconditionally — unlike templates/uploads these ship with the app, not R2.
+// The folder holds only icons, so a root mount cannot shadow an API route.
+app.use(express.static(path.join(__dirname, '..', 'public'), {
+  maxAge: '7d',
+  index: false,
+  redirect: false,
+}));
+
 // ── ROUTES ───────────────────────────────────────────────────────────
 app.use('/', routes);
 

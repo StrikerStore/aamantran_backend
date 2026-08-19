@@ -31,15 +31,15 @@ function isRateLimited(ip, key) {
   return false;
 }
 
+// Store guest input as plain text — no HTML escaping here.
+// Escaping is an output concern, and every consumer already renders safely:
+// the invite SDK uses textContent, the user/admin panels use React. Encoding at
+// write time only produced literal "&#x27;" in the wish wall.
 function sanitizeText(value, maxLen) {
-  const raw = String(value || '').trim();
-  const truncated = maxLen ? raw.slice(0, maxLen) : raw;
-  return truncated
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;')
-    .replace(/'/g, '&#x27;');
+  const raw = String(value || '')
+    .replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F]/g, '') // strip control chars, keep tab/newline
+    .trim();
+  return maxLen ? raw.slice(0, maxLen) : raw;
 }
 
 async function getEventBySlug(eventSlug) {
