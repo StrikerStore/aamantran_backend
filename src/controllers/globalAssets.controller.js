@@ -7,10 +7,30 @@ const objectStorage = require('../services/objectStorage');
 
 const storage = require('../config/storage');
 
+/**
+ * GET /assets — optionally paginated.
+ *
+ * Backward compatible on purpose: without a `limit` param this returns every
+ * asset exactly as before, so the public GET mount and any existing caller keep
+ * working. Passing `limit` (capped at 100) switches on pagination and adds
+ * `total`, which is what the admin panel now uses.
+ */
 async function list(req, res) {
   try {
-    const assets = await prisma.globalAsset.findMany({ orderBy: { createdAt: 'desc' } });
-    res.json({ ok: true, assets });
+    const rawLimit = Number(req.query.limit);
+    const paginated = Number.isFinite(rawLimit) && rawLimit > 0;
+    const limit = paginated ? Math.min(rawLimit, 100) : undefined;
+    const page = Math.max(1, Number(req.query.page) || 1);
+
+    const [assets, total] = await Promise.all([
+      prisma.globalAsset.findMany({
+        orderBy: { createdAt: 'desc' },
+        ...(paginated ? { skip: (page - 1) * limit, take: limit } : {}),
+      }),
+      paginated ? prisma.globalAsset.count() : Promise.resolve(undefined),
+    ]);
+
+    res.json({ ok: true, assets, ...(paginated ? { total, page, limit } : {}) });
   } catch (err) {
     res.status(500).json({ ok: false, error: err.message });
   }

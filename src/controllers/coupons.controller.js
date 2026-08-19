@@ -1,10 +1,27 @@
 const prisma = require('../utils/prisma');
 
+/**
+ * GET /coupons — optionally paginated.
+ *
+ * Without a `limit` param this behaves exactly as before and returns every
+ * coupon, so existing callers are unaffected. Passing `limit` (capped at 100)
+ * switches on pagination and adds `total`.
+ */
 async function list(req, res) {
-  const coupons = await prisma.couponCode.findMany({
-    orderBy: { createdAt: 'desc' },
-  });
-  res.json({ ok: true, data: coupons });
+  const rawLimit = Number(req.query.limit);
+  const paginated = Number.isFinite(rawLimit) && rawLimit > 0;
+  const limit = paginated ? Math.min(rawLimit, 100) : undefined;
+  const page = Math.max(1, Number(req.query.page) || 1);
+
+  const [coupons, total] = await Promise.all([
+    prisma.couponCode.findMany({
+      orderBy: { createdAt: 'desc' },
+      ...(paginated ? { skip: (page - 1) * limit, take: limit } : {}),
+    }),
+    paginated ? prisma.couponCode.count() : Promise.resolve(undefined),
+  ]);
+
+  res.json({ ok: true, data: coupons, ...(paginated ? { total, page, limit } : {}) });
 }
 
 async function create(req, res) {
