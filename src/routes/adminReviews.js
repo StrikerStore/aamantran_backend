@@ -6,6 +6,7 @@ const auth    = require('../middleware/auth');
 const prisma  = require('../utils/prisma');
 const storage       = require('../config/storage');
 const objectStorage = require('../services/objectStorage');
+const { EXCLUDE_TEST_OWNER } = require('../utils/testFilters');
 
 const photoUpload = multer({
   storage: multer.memoryStorage(),
@@ -36,6 +37,7 @@ router.get('/', async (req, res) => {
       ...(templateId && { templateId }),
       ...(hidden === 'true'  && { isHidden: true  }),
       ...(hidden === 'false' && { isHidden: false }),
+      ...EXCLUDE_TEST_OWNER,
     };
     const [reviews, total] = await Promise.all([
       prisma.templateReview.findMany({
@@ -146,7 +148,7 @@ router.delete('/:id', async (req, res) => {
 
 async function recalcAvgRating(templateId) {
   const agg = await prisma.templateReview.aggregate({
-    where: { templateId, isHidden: false },
+    where: { templateId, isHidden: false, ...EXCLUDE_TEST_OWNER },
     _avg:  { rating: true },
   });
   await prisma.template.update({

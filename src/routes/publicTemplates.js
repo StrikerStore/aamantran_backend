@@ -2,6 +2,7 @@
 const express = require('express');
 const prisma  = require('../utils/prisma');
 const { publicInviteLimiter } = require('../middleware/rateLimits');
+const { EXCLUDE_TEST_OWNER } = require('../utils/testFilters');
 
 const router = express.Router();
 router.use(publicInviteLimiter);
@@ -54,7 +55,7 @@ router.get('/', async (req, res) => {
 // returned), so the UI can show "X.X based on N reviews" header.
 router.get('/featured', async (req, res) => {
   const { limit = 50 } = req.query;
-  const where = { reviewText: { not: null }, isHidden: false };
+  const where = { reviewText: { not: null }, isHidden: false, ...EXCLUDE_TEST_OWNER };
 
   const [reviews, agg] = await Promise.all([
     prisma.templateReview.findMany({
@@ -69,7 +70,7 @@ router.get('/featured', async (req, res) => {
       },
     }),
     prisma.templateReview.aggregate({
-      where: { isHidden: false },
+      where: { isHidden: false, ...EXCLUDE_TEST_OWNER },
       _avg:  { rating: true },
       _count: { _all: true },
     }),
@@ -98,7 +99,7 @@ router.get('/:slug', async (req, res) => {
 
   if (!template) return res.status(404).json({ message: 'Template not found' });
 
-  const reviewCount = await prisma.templateReview.count({ where: { templateId: template.id, isHidden: false } });
+  const reviewCount = await prisma.templateReview.count({ where: { templateId: template.id, isHidden: false, ...EXCLUDE_TEST_OWNER } });
   res.json({ ...template, reviewCount });
 });
 
@@ -109,7 +110,7 @@ router.get('/:slug/reviews', async (req, res) => {
   const template = await prisma.template.findUnique({ where: { slug: req.params.slug } });
   if (!template) return res.json({ reviews: [], avgRating: 0, totalCount: 0 });
 
-  const where = { templateId: template.id, isHidden: false };
+  const where = { templateId: template.id, isHidden: false, ...EXCLUDE_TEST_OWNER };
 
   const [reviews, agg] = await Promise.all([
     prisma.templateReview.findMany({

@@ -14,6 +14,7 @@
     "jobs:analytics-rollup": "node scripts/run-analytics-rollup.js",
     "jobs:retention": "node scripts/run-retention.js",
     "notify:dpdp": "node scripts/send-dpdp-notice.js",
+    "test:account": "node scripts/ensure-test-account.js",
     "dev": "nodemon src/server.js",
     "db:migrate": "prisma migrate dev",
     "db:generate": "prisma generate",

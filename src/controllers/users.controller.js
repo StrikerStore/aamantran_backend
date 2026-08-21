@@ -93,7 +93,7 @@ function resolveFunctionVenueMap(fn) {
 
 // GET /api/v1/users
 async function list(req, res) {
-  const { search, page = 1, limit = 20 } = req.query;
+  const { search, page = 1, limit = 20, includeTest } = req.query;
   const skip = (Number(page) - 1) * Number(limit);
 
   const where = search
@@ -104,6 +104,10 @@ async function list(req, res) {
       ]}
     : {};
 
+  // The dashboard's "Registered Users" card reads this endpoint's `total`, so
+  // hiding the test account by default keeps that number honest too.
+  if (includeTest !== '1') where.isTestAccount = false;
+
   const [users, total] = await Promise.all([
     prisma.user.findMany({
       where,
@@ -112,6 +116,7 @@ async function list(req, res) {
       orderBy: { createdAt: 'desc' },
       select: {
         id: true, email: true, username: true, phone: true, createdAt: true,
+        isTestAccount: true,
         _count: { select: { events: true, payments: true } },
       },
     }),

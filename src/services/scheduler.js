@@ -10,6 +10,7 @@ const {
 const siteUrls = require('../config/siteUrls');
 const { runWebsiteAnalyticsRollupJob, pruneOldWebsiteData } = require('./analyticsRollup.service');
 const { runGuestDataRetentionJob, pruneAuthAuditLogs } = require('./dataRetention.service');
+const { EXCLUDE_TEST_EVENT, EXCLUDE_TEST_OWNER } = require('../utils/testFilters');
 const { buildUnsubscribeUrl } = require('../utils/unsubscribe');
 
 function toMidnight(d) {
@@ -31,6 +32,7 @@ async function runOnboardingReminderJob() {
       reminderSentAt: null,
       createdAt: { lte: cutoff },
       customerEmail: { not: '' },
+      ...EXCLUDE_TEST_OWNER,
     },
     include: { template: { select: { slug: true, name: true } } },
     take: 200,
@@ -57,6 +59,7 @@ async function runAbandonedCheckoutJob() {
         lte: new Date(now - 2 * 60 * 60 * 1000),
         gte: new Date(now - 72 * 60 * 60 * 1000),
       },
+      ...EXCLUDE_TEST_OWNER,
     },
     include: { template: { select: { slug: true, name: true } } },
     take: 200,
@@ -88,6 +91,7 @@ async function runRsvpMilestoneJob() {
       isPublished: true,
       owner: { email: { not: '' } },
       OR: [{ inviteScope: null }, { inviteScope: 'full' }],
+      ...EXCLUDE_TEST_EVENT,
     },
     include: { owner: { select: { email: true } } },
     take: 500,
@@ -110,6 +114,7 @@ async function runDateBasedEmailJob() {
       isPublished: true,
       owner: { email: { not: '' } },
       OR: [{ inviteScope: null }, { inviteScope: 'full' }],
+      ...EXCLUDE_TEST_EVENT,
     },
     include: {
       owner: { select: { email: true } },

@@ -21,9 +21,18 @@ async function deleteAccount(req, res) {
 
   const user = await prisma.user.findUnique({
     where: { id: userId },
-    select: { id: true, email: true, username: true, passwordHash: true },
+    select: { id: true, email: true, username: true, passwordHash: true, isTestAccount: true },
   });
   if (!user) return res.status(404).json({ ok: false, message: 'Account not found' });
+
+  // Deleting the testing account here would mint a new user id on the next
+  // provision, silently breaking bookmarked /users/<id> links in the admin panel.
+  if (user.isTestAccount) {
+    return res.status(403).json({
+      ok: false,
+      message: 'The testing account cannot be deleted here. Use the admin Testing page.',
+    });
+  }
 
   const valid = await bcrypt.compare(String(password), user.passwordHash);
   if (!valid) {

@@ -6,6 +6,7 @@ const { addEventMedia, removeEventMedia } = require('../services/eventMedia.serv
 const { normalizeOptionalHttpUrl } = require('../utils/urlNormalize');
 const siteUrls = require('../config/siteUrls');
 const { mintInvitePreviewToken } = require('../services/previewToken');
+const { EXCLUDE_TEST_OWNER } = require('../utils/testFilters');
 
 // ─── HELPERS ─────────────────────────────────────────────────────────────────
 
@@ -934,6 +935,16 @@ async function submitReview(req, res) {
   if (!templateId || !rating) return res.status(400).json({ ok: false, message: 'templateId and rating are required' });
   if (rating < 1 || rating > 5) return res.status(400).json({ ok: false, message: 'rating must be 1–5' });
 
+  // The testing account owns no payments so it would fail the check below
+  // anyway; refuse explicitly so a test review can never drag avgRating.
+  const reviewer = await prisma.user.findUnique({
+    where:  { id: req.user.id },
+    select: { isTestAccount: true },
+  });
+  if (reviewer?.isTestAccount) {
+    return res.status(403).json({ ok: false, message: 'The testing account cannot submit reviews' });
+  }
+
   // Verify user bought this template
   const payment = await prisma.payment.findFirst({
     where: { userId: req.user.id, templateId, status: 'paid' },
@@ -985,7 +996,11 @@ async function submitReview(req, res) {
   });
 
   // Update template avgRating
-  const agg = await prisma.templateReview.aggregate({ where: { templateId }, _avg: { rating: true }, _count: true });
+  const agg = await prisma.templateReview.aggregate({
+    where: { templateId, ...EXCLUDE_TEST_OWNER },
+    _avg: { rating: true },
+    _count: true,
+  });
   await prisma.template.update({
     where: { id: templateId },
     data: { avgRating: agg._avg.rating || 0 },

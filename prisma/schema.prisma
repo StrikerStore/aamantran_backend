@@ -164,6 +164,9 @@ model User {
   consentAt     DateTime? // DPDP: when the user accepted Terms + Privacy Policy
   policyVersion String?   // DPDP: privacy-policy version accepted (e.g. "2026-07-08")
   createdAt    DateTime @default(now())
+  /// Owner's permanent template-testing account. Excluded from every admin
+  /// analytic, and blocked from checkout, reviews and self-deletion.
+  isTestAccount Boolean @default(false)
 
   events        Event[]
   payments      Payment[]
@@ -172,6 +175,7 @@ model User {
   swapRequests  TemplateSwapRequest[]
 
   @@index([email])
+  @@index([isTestAccount])
 }
 
 // ─── INVITATIONS ──────────────────────────────────────────────────────────────
@@ -213,6 +217,9 @@ model Event {
   websiteUrl        String? @db.VarChar(2048)
   rsvpEnabled       Boolean @default(true)
   guestNotesEnabled Boolean @default(true)
+  /// Denormalised from owner.isTestAccount — written only by the testing endpoint.
+  /// Lets Event-rooted queries (render, cron, retention) filter without a join.
+  isTestEvent       Boolean @default(false)
 
   functions    Function[]
   people       EventPerson[]
@@ -239,6 +246,7 @@ model Event {
   photoWallItems     PhotoWallItem[]
 
   @@index([invitePairId])
+  @@index([isTestEvent])
 }
 
 // ─── EVENT PEOPLE (dynamic roles) ────────────────────────────────────────────

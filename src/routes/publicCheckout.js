@@ -565,6 +565,11 @@ router.post('/register', async (req, res) => {
     const existingUser = await prisma.user.findFirst({ where: { username: usernameNorm } });
 
     if (existingUser) {
+      // Binding a real paid purchase to the testing account would put it back
+      // into every analytic the test flag exists to keep it out of.
+      if (existingUser.isTestAccount) {
+        return res.status(403).json({ message: 'This username cannot be used for a purchase.' });
+      }
       if (existingUser.email !== emailLower) {
         return res.status(409).json({ message: 'This username belongs to a different account. Choose a different username or use your original email.' });
       }

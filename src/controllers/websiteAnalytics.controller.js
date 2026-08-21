@@ -1,4 +1,5 @@
 const prisma = require('../utils/prisma');
+const { EXCLUDE_TEST_OWNER } = require('../utils/testFilters');
 
 const MAX_RANGE_DAYS = 92;
 const LIVE_WINDOW_MS = 5 * 60 * 1000;
@@ -72,7 +73,7 @@ async function getSummary(req, res) {
       FROM WebsiteEvent
       WHERE createdAt >= ${from} AND createdAt <= ${to}
       GROUP BY type`,
-    prisma.payment.count({ where: { status: 'paid', createdAt: { gte: from, lte: to } } }),
+    prisma.payment.count({ where: { status: 'paid', createdAt: { gte: from, lte: to }, ...EXCLUDE_TEST_OWNER } }),
   ]);
 
   const funnelCounts = Object.fromEntries(funnelRaw.map((r) => [r.type, Number(r.c)]));

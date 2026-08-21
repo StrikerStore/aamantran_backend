@@ -175,10 +175,13 @@ router.get('/i/:slug', async (req, res) => {
     return res.status(410).send('<h1>This invitation has expired. Please contact the host.</h1>');
   }
 
-  // Log the open event (non-blocking)
-  prisma.invitationEvent.create({
-    data: { eventId: event.id, type: 'opened', metadata: { ua: req.headers['user-agent'] } },
-  }).catch(() => {});
+  // Log the open event (non-blocking). Skipped for the testing account so
+  // recording takes and QA refreshes don't inflate invitation analytics.
+  if (!event.isTestEvent) {
+    prisma.invitationEvent.create({
+      data: { eventId: event.id, type: 'opened', metadata: { ua: req.headers['user-agent'] } },
+    }).catch(() => {});
+  }
 
   const data = buildInvitationData(event);
   const variant = detectVariant(req);
@@ -220,6 +223,9 @@ router.get('/i/:slug', async (req, res) => {
   });
 
   setNoCacheHeaders(res);
+  // The testing invite sits on a stable, guessable slug and may be rendering an
+  // unreleased template — keep it out of search results.
+  if (event.isTestEvent) res.setHeader('X-Robots-Tag', 'noindex, nofollow, noarchive');
   res.setHeader('Content-Type', 'text/html; charset=utf-8');
   res.send(html);
 });

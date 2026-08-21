@@ -10,6 +10,7 @@
 const prisma = require('../utils/prisma');
 const siteUrls = require('../config/siteUrls');
 const { sendGuestDataDeletionWarningEmail } = require('./email.service');
+const { EXCLUDE_TEST_EVENT } = require('../utils/testFilters');
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 const WARNING_AFTER_DAYS = 88;
@@ -28,6 +29,7 @@ async function sendDeletionWarnings(now = new Date()) {
       expiresAt: { not: null, lte: new Date(now.getTime() - WARNING_AFTER_DAYS * DAY_MS) },
       guestDataWarningSentAt: null,
       guestDataDeletedAt: null,
+      ...EXCLUDE_TEST_EVENT,
     },
     select: {
       id: true,
@@ -78,6 +80,7 @@ async function eraseExpiredGuestData(now = new Date()) {
       expiresAt: { not: null, lte: new Date(now.getTime() - DELETE_AFTER_DAYS * DAY_MS) },
       guestDataDeletedAt: null,
       guestDataWarningSentAt: { not: null, lte: new Date(now.getTime() - MIN_WARNING_LEAD_MS) },
+      ...EXCLUDE_TEST_EVENT,
     },
     select: { id: true },
     take: BATCH,

@@ -14,6 +14,8 @@ const siteUrls     = require('../config/siteUrls');
 const storage      = require('../config/storage');
 const objectStorage = require('../services/objectStorage');
 const { normalizeDemoCustomFieldRows } = require('../utils/dateNormalize');
+const { EXCLUDE_TEST_EVENT } = require('../utils/testFilters');
+const { purgeTestEvents } = require('../services/testAccount.service');
 
 // GET /api/v1/templates
 async function list(req, res) {
@@ -366,8 +368,12 @@ async function deleteThumbnail(req, res) {
  * @returns {Promise<{ count: number }>}
  */
 async function repointAllEventsToTemplateVersion(templateId, versionId) {
+  // Test events are excluded on purpose. The testing account pins
+  // templateVersionId to null so it renders the mutable draft folder, which is
+  // what makes "re-upload the ZIP and refresh" work. Repointing it here would
+  // silently freeze it on this snapshot and break that loop with no error.
   const { count } = await prisma.event.updateMany({
-    where: { templateId },
+    where: { templateId, ...EXCLUDE_TEST_EVENT },
     data:  { templateVersionId: versionId },
   });
   await prisma.eventRenderCache.deleteMany({
@@ -487,7 +493,7 @@ async function deleteVersion(req, res) {
   }
 
   const pinned = await prisma.event.count({
-    where: { templateVersionId: version.id },
+    where: { templateVersionId: version.id, ...EXCLUDE_TEST_EVENT },
   });
   if (pinned > 0) {
     return res.status(409).json({
@@ -537,13 +543,22 @@ async function deleteVersion(req, res) {
 async function remove(req, res) {
   const template = await prisma.template.findUniqueOrThrow({ where: { id: req.params.id } });
 
-  const activeEvents = await prisma.event.count({ where: { templateId: template.id, isPublished: true } });
+  const activeEvents = await prisma.event.count({
+    where: { templateId: template.id, isPublished: true, ...EXCLUDE_TEST_EVENT },
+  });
   if (activeEvents > 0) {
     return res.status(409).json({
       ok: false,
       message: `Cannot delete: ${activeEvents} published invitation(s) use this template`,
     });
   }
+
+  // Event.templateId has no onDelete rule, so a leftover test invitation would
+  // make the delete fail on a foreign key even though the guard above passed.
+  const testEvents = await prisma.event.count({
+    where: { templateId: template.id, isTestEvent: true },
+  });
+  if (testEvents > 0) await purgeTestEvents();
 
   await prisma.template.delete({ where: { id: req.params.id } });
   await deleteTemplateFolder(template.folderPath);

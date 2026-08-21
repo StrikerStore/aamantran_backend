@@ -1,13 +1,14 @@
 const prisma = require('../utils/prisma');
 const { sendTicketReplyEmail } = require('../services/email.service');
 const siteUrls = require('../config/siteUrls');
+const { EXCLUDE_TEST_OWNER } = require('../utils/testFilters');
 
 // GET /api/v1/tickets
 async function list(req, res) {
   const { status, page = 1, limit = 20 } = req.query;
   const skip = (Number(page) - 1) * Number(limit);
 
-  const where = status ? { status } : {};
+  const where = { ...(status ? { status } : {}), ...EXCLUDE_TEST_OWNER };
 
   const [tickets, total] = await Promise.all([
     prisma.supportTicket.findMany({

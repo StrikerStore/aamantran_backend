@@ -155,8 +155,14 @@ async function processTemplate(tpl) {
     },
   });
 
+  // Test events are excluded on purpose. A null templateVersionId means
+  // "legacy event that missed the backfill" for a real invitation, but for the
+  // testing account it is a deliberate pin to the mutable draft folder — that is
+  // what makes "re-upload the ZIP and refresh" work. This script runs on every
+  // deploy via prestart, so without the guard each deploy would silently freeze
+  // the test event on v1.
   const { count } = await prisma.event.updateMany({
-    where: { templateId: tpl.id, templateVersionId: null },
+    where: { templateId: tpl.id, templateVersionId: null, isTestEvent: false },
     data:  { templateVersionId: version.id },
   });
 
