@@ -5,7 +5,7 @@ const { parseGoogleMapsLocation } = require('../utils/mapsParse');
 const { createPaymentLinkOrPlaceholder } = require('../services/payu.service');
 const { sendBalancePaymentEmail, sendInvitationPublishedEmail, sendTemplateChangedEmail } = require('../services/email.service');
 const { addEventMedia, removeEventMedia } = require('../services/eventMedia.service');
-const { normalizeOptionalHttpUrl } = require('../utils/urlNormalize');
+const { normalizeOptionalHttpUrl, normalizeOptionalHashtag } = require('../utils/urlNormalize');
 const siteUrls = require('../config/siteUrls');
 const { mintInvitePreviewToken } = require('../services/previewToken');
 
@@ -452,7 +452,7 @@ async function freezeNames(req, res) {
 async function updateEventData(req, res) {
   const { eventId, brideName, groomName, language, isPublished, slug, eventType, community,
           functions, media, people, venues, customFields,
-          instagramUrl, socialYoutubeUrl, websiteUrl, rsvpEnabled, guestNotesEnabled } = req.body;
+          instagramUrl, instagramHashtag, socialYoutubeUrl, websiteUrl, rsvpEnabled, guestNotesEnabled } = req.body;
 
   if (!eventId) return res.status(400).json({ ok: false, message: 'eventId required' });
 
@@ -473,6 +473,7 @@ async function updateEventData(req, res) {
       ...(eventType   !== undefined && { eventType }),
       ...(community   !== undefined && { community }),
       ...(instagramUrl !== undefined && { instagramUrl: normalizeOptionalHttpUrl(instagramUrl) }),
+      ...(instagramHashtag !== undefined && { instagramHashtag: normalizeOptionalHashtag(instagramHashtag) }),
       ...(socialYoutubeUrl !== undefined && { socialYoutubeUrl: normalizeOptionalHttpUrl(socialYoutubeUrl) }),
       ...(websiteUrl !== undefined && { websiteUrl: normalizeOptionalHttpUrl(websiteUrl) }),
       ...(rsvpEnabled !== undefined && { rsvpEnabled: Boolean(rsvpEnabled) }),

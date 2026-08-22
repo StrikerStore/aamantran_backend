@@ -90,6 +90,7 @@ model TemplateDemoData {
   mediaSlotDemoUrls Json? // { slotKey: "https://..." } — demo URLs for media slot preview
   // Links & guests demo settings
   instagramUrl      String?  @db.VarChar(2048)
+  instagramHashtag  String?  @db.VarChar(120)
   socialYoutubeUrl  String?  @db.VarChar(2048)
   websiteUrl        String?  @db.VarChar(2048)
   rsvpEnabled       Boolean  @default(true)
@@ -213,6 +214,8 @@ model Event {
 
   /// Optional social / web links (icons live in template HTML; URLs from dashboard)
   instagramUrl      String? @db.VarChar(2048)
+  /// Stored without the leading "#"; rendered as {{hashtag}} with one.
+  instagramHashtag  String? @db.VarChar(120)
   socialYoutubeUrl  String? @db.VarChar(2048)
   websiteUrl        String? @db.VarChar(2048)
   rsvpEnabled       Boolean @default(true)

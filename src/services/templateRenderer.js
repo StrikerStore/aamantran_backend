@@ -288,6 +288,9 @@ function buildInvitationData(event) {
   }
 
   const instagram_url = (event.instagramUrl && String(event.instagramUrl).trim()) || '';
+  // Stored bare; templates get it display-ready with exactly one leading "#".
+  const hashtagBare = (event.instagramHashtag && String(event.instagramHashtag).trim().replace(/^#+/, '')) || '';
+  const hashtag = hashtagBare ? `#${hashtagBare}` : '';
   const social_youtube_url = (event.socialYoutubeUrl && String(event.socialYoutubeUrl).trim()) || '';
   const website_url = (event.websiteUrl && String(event.websiteUrl).trim()) || '';
   const rsvp_enabled = event.rsvpEnabled !== false;
@@ -319,6 +322,8 @@ function buildInvitationData(event) {
     invite_url:    `${siteUrls.apiBaseUrl()}/i/${event.slug}`,
 
     instagram_url,
+    hashtag,
+    hashtag_raw: hashtagBare,
     social_youtube_url,
     website_url,
     rsvp_enabled,
@@ -431,6 +436,7 @@ function buildDemoData(demoData) {
 
   const rsvpDemo = demoData.rsvpEnabled !== false && demoData.rsvp_enabled !== false;
   const notesDemo = demoData.guestNotesEnabled !== false && demoData.guest_notes_enabled !== false;
+  const demoHashtag = String(demoData.instagramHashtag || demoData.hashtag || '').trim().replace(/^#+/, '');
 
   const primaryWeddingIso =
     toYyyyMmDd(custom.wedding_date)
@@ -455,6 +461,8 @@ function buildDemoData(demoData) {
     invite_url:    '#',
 
     instagram_url:       demoData.instagramUrl || demoData.instagram_url || '',
+    hashtag:             demoHashtag ? `#${demoHashtag}` : '',
+    hashtag_raw:         demoHashtag,
     social_youtube_url:  demoData.socialYoutubeUrl || demoData.social_youtube_url || '',
     website_url:         demoData.websiteUrl || demoData.website_url || '',
     rsvp_enabled:        rsvpDemo,

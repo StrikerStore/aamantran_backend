@@ -3,7 +3,7 @@ const path    = require('path');
 const { v4: uuidv4 } = require('uuid');
 const { sendInvitationPublishedEmail } = require('../services/email.service');
 const { addEventMedia, removeEventMedia } = require('../services/eventMedia.service');
-const { normalizeOptionalHttpUrl } = require('../utils/urlNormalize');
+const { normalizeOptionalHttpUrl, normalizeOptionalHashtag } = require('../utils/urlNormalize');
 const siteUrls = require('../config/siteUrls');
 const { mintInvitePreviewToken } = require('../services/previewToken');
 const { EXCLUDE_TEST_OWNER } = require('../utils/testFilters');
@@ -190,6 +190,7 @@ async function updateEvent(req, res) {
     language,
     subdomain,
     instagramUrl,
+    instagramHashtag,
     socialYoutubeUrl,
     websiteUrl,
     rsvpEnabled,
@@ -200,6 +201,7 @@ async function updateEvent(req, res) {
   if (language)    data.language  = language;
   if (subdomain !== undefined) data.subdomain = subdomain || null;
   if (instagramUrl !== undefined) data.instagramUrl = normalizeOptionalHttpUrl(instagramUrl);
+  if (instagramHashtag !== undefined) data.instagramHashtag = normalizeOptionalHashtag(instagramHashtag);
   if (socialYoutubeUrl !== undefined) data.socialYoutubeUrl = normalizeOptionalHttpUrl(socialYoutubeUrl);
   if (websiteUrl !== undefined) data.websiteUrl = normalizeOptionalHttpUrl(websiteUrl);
   if (rsvpEnabled !== undefined) data.rsvpEnabled = Boolean(rsvpEnabled);
@@ -329,6 +331,7 @@ async function publishEvent(req, res) {
           inviteScope:  'subset',
           invitePairId: pairId,
           instagramUrl:      event.instagramUrl ?? null,
+          instagramHashtag:  event.instagramHashtag ?? null,
           socialYoutubeUrl:  event.socialYoutubeUrl ?? null,
           websiteUrl:        event.websiteUrl ?? null,
           rsvpEnabled:       event.rsvpEnabled !== false,
