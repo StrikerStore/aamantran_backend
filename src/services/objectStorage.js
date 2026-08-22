@@ -181,9 +181,21 @@ async function copyObject(srcKey, destKey) {
   );
 }
 
+/**
+ * Objects under assets/ are the shared global library (background music the
+ * admin uploads once for every user to pick from). A Media/User row can hold a
+ * global asset's URL, so URL-driven cleanup must never touch them — otherwise
+ * one person removing their background music deletes the track for everyone.
+ * The admin's own delete path calls deleteObjectKey directly and is unaffected.
+ */
+function isSharedObjectKey(key) {
+  return String(key || '').startsWith('assets/');
+}
+
 async function tryDeletePublicUrl(url) {
   const key = storage.publicUrlToObjectKey(url);
   if (!key) return;
+  if (isSharedObjectKey(key)) return;
   await deleteObjectKey(key);
 }
 
@@ -251,5 +263,6 @@ module.exports = {
   listKeys,
   copyObject,
   tryDeletePublicUrl,
+  isSharedObjectKey,
   ensureBucketCors,
 };

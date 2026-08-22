@@ -300,6 +300,20 @@ async function publishEvent(req, res) {
   // Create subset event if requested
   if (createPartial && partialFunctionIds?.length) {
     const pSlug = slugify(partialSlug || `${event.slug}-partial`);
+    if (!pSlug) {
+      return res.status(400).json({ ok: false, message: 'Partial invite link is required' });
+    }
+    // Compare against the slug the main invite is about to have, not the one it
+    // has now: a rename lands in the same transaction, so an identical partial
+    // slug would otherwise slip past the conflict check below and only fail on
+    // the unique index — surfacing as a generic 500.
+    const effectiveMainSlug = mainUpdate.slug || event.slug;
+    if (pSlug === effectiveMainSlug) {
+      return res.status(400).json({
+        ok: false,
+        message: 'Partial invite link must be different from the full invite link',
+      });
+    }
     const pConflict = await prisma.event.findFirst({ where: { slug: pSlug } });
     if (pConflict) return res.status(409).json({ ok: false, message: 'Partial invite slug is already taken' });
 

@@ -21,6 +21,29 @@ function publicUploadUrl(req, eventId, filename) {
 }
 
 /**
+ * Drop the stored object behind a media row — but only when this event actually
+ * owns it.
+ *
+ * A Media row does not imply ownership of the bytes: picking a track from the
+ * global asset library stores that shared URL verbatim, and a row can also point
+ * at a template's demo file or an arbitrary external link. Deleting those would
+ * destroy the file for every other event, so we allow-list the two prefixes we
+ * mint for an event and ignore everything else.
+ *
+ * @param {string} url
+ * @param {{ eventId: string, ownerId?: string }} owner
+ */
+async function deleteOwnedMediaObject(url, { eventId, ownerId }) {
+  const key = storage.publicUrlToObjectKey(url);
+  if (!key) return; // external URL, or local-disk mode
+  const isOwned =
+    key.startsWith(`uploads/events/${eventId}/`) ||
+    (ownerId && key.startsWith(`users/${ownerId}/whatsapp-share-images/`));
+  if (!isOwned) return;
+  await objectStorage.deleteObjectKey(key);
+}
+
+/**
  * @param {import('@prisma/client').PrismaClient} prisma
  * @param {{ eventId: string, expectedOwnerId: string, req: import('express').Request }} opts
  */
@@ -110,8 +133,7 @@ async function addEventMedia(prisma, { eventId, expectedOwnerId, req }) {
     });
     await prisma.media.deleteMany({ where: { eventId: event.id, slotKey: 'wa_share_image' } });
     for (const row of existing) {
-      // NOTE: the URL might be a custom users/ path now, but tryDeletePublicUrl should handle it
-      await objectStorage.tryDeletePublicUrl(row.url);
+      await deleteOwnedMediaObject(row.url, { eventId: event.id, ownerId: event.ownerId });
     }
   } else if (slotDef && !slotDef.multiple) {
     const existing = await prisma.media.findMany({
@@ -120,7 +142,9 @@ async function addEventMedia(prisma, { eventId, expectedOwnerId, req }) {
     });
     await prisma.media.deleteMany({ where: { eventId: event.id, slotKey: slotDef.key } });
     for (const row of existing) {
-      await objectStorage.tryDeletePublicUrl(row.url);
+      // Replacing a single-file slot: the outgoing row is very often a global
+      // asset the user just switched away from, so ownership matters most here.
+      await deleteOwnedMediaObject(row.url, { eventId: event.id, ownerId: event.ownerId });
     }
   }
 
@@ -165,7 +189,7 @@ async function removeEventMedia(prisma, { eventId, mediaId, expectedOwnerId }) {
   if (!row) return { error: { status: 404, message: 'Media not found' } };
 
   await prisma.media.delete({ where: { id: mediaId } });
-  await objectStorage.tryDeletePublicUrl(row.url);
+  await deleteOwnedMediaObject(row.url, { eventId: event.id, ownerId: event.ownerId });
   return { ok: true };
 }
 
