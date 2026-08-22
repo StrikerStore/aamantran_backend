@@ -2,7 +2,7 @@ const express    = require('express');
 const prisma     = require('../utils/prisma');
 const siteUrls   = require('../config/siteUrls');
 const { verifyInvitePreviewToken } = require('../services/previewToken');
-const { renderTemplate, buildInvitationData, buildDemoData } = require('../services/templateRenderer');
+const { renderTemplate, buildInvitationData, buildDemoData, pickShareImage } = require('../services/templateRenderer');
 const { getAamantranSdkScript } = require('../services/aamantranSdk');
 
 const router = express.Router();
@@ -207,11 +207,24 @@ router.get('/i/:slug', async (req, res) => {
         desktopEntryFile: event.template.desktopEntryFile,
         mobileEntryFile:  event.template.mobileEntryFile,
       };
+  // Link-preview card for WhatsApp and friends. Names mirror what the couple
+  // sees; the image prefers their uploaded WhatsApp share photo.
+  const shareNames =
+    [data.bride_name, data.groom_name].filter(Boolean).join(' & ')
+    || (event.people || []).slice(0, 2).map((p) => p.name).filter(Boolean).join(' & ');
+  const shareDetails = [data.wedding_date, data.venue_name].filter(Boolean).join(' — ');
+
   const html = await renderTemplate(renderSource.folderPath, data, {
     variant,
     preferredFile: variant === 'mobile' ? renderSource.mobileEntryFile : renderSource.desktopEntryFile,
     desktopEntryFile: renderSource.desktopEntryFile,
     mobileEntryFile:  renderSource.mobileEntryFile,
+    socialMeta: {
+      title: shareNames ? `${shareNames} — Wedding Invitation` : 'You are invited!',
+      description: shareDetails || 'Tap to view our invitation.',
+      url: `${apiBase}/i/${event.slug}`,
+      image: pickShareImage(event),
+    },
     aamantranContext: {
       eventSlug: event.slug,
       apiBase,

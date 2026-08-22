@@ -155,6 +155,77 @@ function injectFavicon(html) {
   return FAVICON_TAGS + html;
 }
 
+function escapeAttr(value) {
+  return String(value ?? '')
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;');
+}
+
+/**
+ * Link-preview (Open Graph / Twitter) tags for shared invites.
+ *
+ * Templates ship none of these, so WhatsApp scrapes the page and improvises —
+ * scavenging whatever image it finds and falling back to the template's <title>.
+ * Injecting them here means every template gets a correct preview card without
+ * each one having to declare tags. A template that does declare its own og:*
+ * keeps it: we only add what is missing.
+ */
+function injectSocialMeta(html, meta = {}) {
+  if (!html) return html;
+
+  const tags = [];
+  const add = (attr, key, value) => {
+    if (!value) return;
+    // Quote-terminated so og:image does not match an existing og:image:alt.
+    const already = new RegExp(`<meta[^>]+${attr}\\s*=\\s*["']${key}["']`, 'i').test(html);
+    if (already) return;
+    tags.push(`<meta ${attr}="${key}" content="${escapeAttr(value)}">`);
+  };
+
+  add('property', 'og:type', 'website');
+  add('property', 'og:site_name', 'Aamantran');
+  add('property', 'og:title', meta.title);
+  add('property', 'og:description', meta.description);
+  add('property', 'og:url', meta.url);
+  add('property', 'og:image', meta.image);
+  if (meta.image) add('property', 'og:image:alt', meta.title);
+  add('name', 'twitter:card', meta.image ? 'summary_large_image' : 'summary');
+  add('name', 'twitter:title', meta.title);
+  add('name', 'twitter:description', meta.description);
+  add('name', 'twitter:image', meta.image);
+
+  if (!tags.length) return html;
+  const block = tags.join('');
+
+  const headClose = html.toLowerCase().indexOf('</head>');
+  if (headClose !== -1) return html.slice(0, headClose) + block + html.slice(headClose);
+
+  const headOpen = html.match(/<head[^>]*>/i);
+  if (headOpen) {
+    const at = headOpen.index + headOpen[0].length;
+    return html.slice(0, at) + block + html.slice(at);
+  }
+  return block + html;
+}
+
+/**
+ * Pick the image a shared invite should preview with. The host's uploaded
+ * WhatsApp share image wins; otherwise fall back to the template's hero or any
+ * photo they have added.
+ */
+function pickShareImage(event) {
+  const media = (event?.media || []).filter((m) => m && m.url);
+  const wa = media.find((m) => m.slotKey === 'wa_share_image');
+  if (wa) return wa.url;
+  for (const key of ['invite_hero', 'couple_images', 'gallery', 'photos', 'grand_entry']) {
+    const hit = media.find((m) => m.slotKey === key && m.type === 'photo');
+    if (hit) return hit.url;
+  }
+  return media.find((m) => m.type === 'photo')?.url || '';
+}
+
 /**
  * Render a template with the given data object.
  * The template HTML uses {{variable}} tokens (Handlebars syntax).
@@ -174,7 +245,10 @@ async function renderTemplate(folderName, data, options = {}) {
 
   // Compile and render
   const template = Handlebars.compile(html, { noEscape: true });
-  const rendered = injectFavicon(template(data));
+  let rendered = injectFavicon(template(data));
+  if (options.socialMeta) {
+    rendered = injectSocialMeta(rendered, options.socialMeta);
+  }
   if (options.aamantranContext) {
     return injectAamantranRuntime(rendered, options.aamantranContext);
   }
@@ -540,4 +614,10 @@ function safeJsonParse(str) {
   try { return JSON.parse(str); } catch { return str; }
 }
 
-module.exports = { renderTemplate, buildInvitationData, buildDemoData };
+module.exports = {
+  renderTemplate,
+  buildInvitationData,
+  buildDemoData,
+  pickShareImage,
+  injectSocialMeta,
+};
