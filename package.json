@@ -11,6 +11,7 @@
     "db:migrate-order-id": "npx prisma migrate deploy",
     "db:migrate-analytics": "npx prisma migrate deploy",
     "db:backfill-versions": "node scripts/backfill-template-versions.js --apply",
+    "db:backfill-pair-settings": "node scripts/backfill-invite-pair-settings.js --apply",
     "jobs:analytics-rollup": "node scripts/run-analytics-rollup.js",
     "jobs:retention": "node scripts/run-retention.js",
     "notify:dpdp": "node scripts/send-dpdp-notice.js",

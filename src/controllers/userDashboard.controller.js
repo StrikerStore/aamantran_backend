@@ -15,6 +15,61 @@ function ownerGuard(event, userId) {
   return true;
 }
 
+/**
+ * Settings that a full invite and its paired partial invite must always share.
+ *
+ * A partial invite is the same celebration on a different slug with a subset of
+ * functions — so the Links & Guests settings belong to the pair, not to one row.
+ * Deliberately excluded: `slug` and `subdomain`, which are per-invite by design,
+ * and anything derived from the function list (expiresAt), which differs because
+ * the subset carries fewer functions.
+ */
+const PAIR_SHARED_FIELDS = [
+  'language',
+  'instagramUrl',
+  'instagramHashtag',
+  'socialYoutubeUrl',
+  'websiteUrl',
+  'rsvpEnabled',
+  'guestNotesEnabled',
+];
+
+/** Narrow an update payload down to the fields a paired invite must mirror. */
+function pickPairSharedFields(data) {
+  const shared = {};
+  for (const key of PAIR_SHARED_FIELDS) {
+    if (data[key] !== undefined) shared[key] = data[key];
+  }
+  return shared;
+}
+
+/** Read the current pair-shared settings straight off an event row. */
+function readPairSharedFields(event) {
+  return {
+    language:          event.language || 'en',
+    instagramUrl:      event.instagramUrl ?? null,
+    instagramHashtag:  event.instagramHashtag ?? null,
+    socialYoutubeUrl:  event.socialYoutubeUrl ?? null,
+    websiteUrl:        event.websiteUrl ?? null,
+    rsvpEnabled:       event.rsvpEnabled !== false,
+    guestNotesEnabled: event.guestNotesEnabled !== false,
+  };
+}
+
+/**
+ * Mirror pair-shared settings onto every other invite in the same pair.
+ * No-op for unpaired events. `tx` lets callers run it inside a transaction.
+ */
+async function syncPairSharedFields(event, data, tx = prisma) {
+  if (!event?.invitePairId) return;
+  const shared = pickPairSharedFields(data);
+  if (!Object.keys(shared).length) return;
+  await tx.event.updateMany({
+    where: { invitePairId: event.invitePairId, id: { not: event.id } },
+    data: shared,
+  });
+}
+
 function slugify(str) {
   return String(str || '')
     .toLowerCase()
@@ -182,7 +237,10 @@ async function getEvent(req, res) {
 
 /** PUT /api/user/events/:id */
 async function updateEvent(req, res) {
-  const event = await prisma.event.findUnique({ where: { id: req.params.id }, select: { id: true, ownerId: true } });
+  const event = await prisma.event.findUnique({
+    where: { id: req.params.id },
+    select: { id: true, ownerId: true, invitePairId: true },
+  });
   if (!ownerGuard(event, req.user.id)) return res.status(404).json({ ok: false, message: 'Event not found' });
 
   const {
@@ -213,7 +271,13 @@ async function updateEvent(req, res) {
     if (conflict) return res.status(409).json({ ok: false, message: 'Slug already taken' });
   }
 
-  const updated = await prisma.event.update({ where: { id: req.params.id }, data });
+  // Links & Guests settings belong to the invite pair, so a partial invite keeps
+  // matching the full one when the couple edits these after publishing.
+  const updated = await prisma.$transaction(async (tx) => {
+    const row = await tx.event.update({ where: { id: req.params.id }, data });
+    await syncPairSharedFields(event, data, tx);
+    return row;
+  });
   return res.json({ ok: true, event: updated });
 }
 
@@ -283,7 +347,14 @@ async function publishEvent(req, res) {
         const subsetExpiry = await syncEventExpiry(subsetEvent.id, tx);
         await tx.event.update({
           where: { id: subsetEvent.id },
-          data: { isPublished: true, expiresAt: subsetExpiry },
+          data: {
+            isPublished: true,
+            expiresAt: subsetExpiry,
+            // Re-apply the pair-shared settings on every publish. This keeps the
+            // partial invite correct even for pairs that drifted apart before
+            // these settings were synced on update.
+            ...readPairSharedFields(event),
+          },
         });
       }
     });
@@ -338,18 +409,13 @@ async function publishEvent(req, res) {
           templateVersionId: event.templateVersionId,
           community:    event.community,
           eventType:    event.eventType,
-          language:     event.language,
           namesAreFrozen: event.namesAreFrozen,
           isPublished:  true,
           expiresAt:    computeEventExpiryFromFunctions(subsetFunctions),
           inviteScope:  'subset',
           invitePairId: pairId,
-          instagramUrl:      event.instagramUrl ?? null,
-          instagramHashtag:  event.instagramHashtag ?? null,
-          socialYoutubeUrl:  event.socialYoutubeUrl ?? null,
-          websiteUrl:        event.websiteUrl ?? null,
-          rsvpEnabled:       event.rsvpEnabled !== false,
-          guestNotesEnabled: event.guestNotesEnabled !== false,
+          // language + Links & Guests, from the one shared-field definition
+          ...readPairSharedFields(event),
         },
       });
 
@@ -1027,6 +1093,8 @@ async function submitReview(req, res) {
 }
 
 module.exports = {
+  // Exported for scripts/backfill-invite-pair-settings.js
+  PAIR_SHARED_FIELDS, readPairSharedFields,
   listEvents, createEvent, getPreviewToken, getEvent, updateEvent, confirmNames, publishEvent, updatePartialFunctions, unpublishEvent, getEventStats,
   listPeople, addPerson, updatePerson, deletePerson,
   listFunctions, addFunction, updateFunction, deleteFunction,
