@@ -70,6 +70,36 @@ async function syncPairSharedFields(event, data, tx = prisma) {
   });
 }
 
+/**
+ * Every event id belonging to this invite's pair, itself included.
+ *
+ * Guests and RSVPs are written against the invite they were submitted from, so a
+ * guest who responds on the partial invite is stored under the partial event row.
+ * The couple has one guest list, not one per invite link — so dashboard reads span
+ * the whole pair. Returns a single id for unpaired events.
+ */
+async function getPairEventIds(event) {
+  if (!event?.invitePairId) return [event.id];
+  const members = await prisma.event.findMany({
+    where: { invitePairId: event.invitePairId },
+    select: { id: true },
+  });
+  const ids = members.map((m) => m.id);
+  return ids.length ? ids : [event.id];
+}
+
+/** Which invite link a guest came through, for display in the panel. */
+function buildInviteLabels(events, mainEventId) {
+  const labels = new Map();
+  for (const ev of events) {
+    labels.set(ev.id, {
+      inviteScope: ev.id === mainEventId ? (ev.inviteScope || 'full') : (ev.inviteScope || 'subset'),
+      inviteSlug:  ev.slug,
+    });
+  }
+  return labels;
+}
+
 function slugify(str) {
   return String(str || '')
     .toLowerCase()
@@ -537,31 +567,50 @@ async function unpublishEvent(req, res) {
 
 /** GET /api/user/events/:id/stats */
 async function getEventStats(req, res) {
-  const event = await prisma.event.findUnique({ where: { id: req.params.id }, select: { id: true, ownerId: true } });
+  const event = await prisma.event.findUnique({
+    where: { id: req.params.id },
+    select: { id: true, ownerId: true, invitePairId: true },
+  });
   if (!ownerGuard(event, req.user.id)) return res.status(404).json({ ok: false, message: 'Event not found' });
 
+  // Stats cover the whole invite pair: opens, guests and RSVPs from the partial
+  // invite belong to the same celebration.
+  const eventIds = await getPairEventIds(event);
+
   const [opens, rsvpCount, guestCount, functions] = await Promise.all([
-    prisma.invitationEvent.count({ where: { eventId: req.params.id, type: 'opened' } }),
-    prisma.rsvp.count({ where: { eventId: req.params.id, attending: true } }),
-    prisma.guest.count({ where: { eventId: req.params.id } }),
+    prisma.invitationEvent.count({ where: { eventId: { in: eventIds }, type: 'opened' } }),
+    prisma.rsvp.count({ where: { eventId: { in: eventIds }, attending: true } }),
+    prisma.guest.count({ where: { eventId: { in: eventIds } } }),
     prisma.function.findMany({
-      where: { eventId: req.params.id },
+      where: { eventId: { in: eventIds } },
       select: {
-        id: true, name: true,
+        id: true, name: true, eventId: true,
         rsvps: { select: { attending: true, plusCount: true } },
       },
     }),
   ]);
 
-  const perFunction = functions.map(fn => ({
-    id: fn.id, name: fn.name,
-    attending:    fn.rsvps.filter(r => r.attending === true).length,
-    notAttending: fn.rsvps.filter(r => r.attending === false).length,
-    pending:      fn.rsvps.filter(r => r.attending === null).length,
-    plusOnes:     fn.rsvps.reduce((s, r) => s + (r.attending ? r.plusCount : 0), 0),
-  }));
+  // A partial invite holds its own copies of the functions it includes, so the
+  // same function exists as two rows. Merge them by name — the same matching
+  // rule getEvent uses to pair functions across the two invites — so the couple
+  // sees one "Reception" line with the combined totals.
+  const merged = new Map();
+  for (const fn of functions) {
+    const key = fn.name.trim().toLowerCase();
+    if (!merged.has(key)) {
+      merged.set(key, { id: fn.id, name: fn.name, attending: 0, notAttending: 0, pending: 0, plusOnes: 0 });
+    }
+    const agg = merged.get(key);
+    // Prefer the main event's function id — that is the one the panel links against.
+    if (fn.eventId === event.id) { agg.id = fn.id; agg.name = fn.name; }
+    for (const r of fn.rsvps) {
+      if (r.attending === true) { agg.attending++; agg.plusOnes += r.plusCount; }
+      else if (r.attending === false) agg.notAttending++;
+      else agg.pending++;
+    }
+  }
 
-  return res.json({ ok: true, stats: { opens, rsvpCount, guestCount, perFunction } });
+  return res.json({ ok: true, stats: { opens, rsvpCount, guestCount, perFunction: [...merged.values()] } });
 }
 
 // ─── PEOPLE ──────────────────────────────────────────────────────────────────
@@ -818,11 +867,23 @@ async function deleteMedia(req, res) {
 // ─── GUESTS ──────────────────────────────────────────────────────────────────
 
 async function listGuests(req, res) {
-  const event = await prisma.event.findUnique({ where: { id: req.params.id }, select: { id: true, ownerId: true } });
+  const event = await prisma.event.findUnique({
+    where: { id: req.params.id },
+    select: { id: true, ownerId: true, invitePairId: true },
+  });
   if (!ownerGuard(event, req.user.id)) return res.status(404).json({ ok: false, message: 'Event not found' });
 
+  // Span the invite pair: guests who RSVP'd on the partial invite are stored
+  // under that event row and would otherwise be invisible here.
+  const eventIds = await getPairEventIds(event);
+  const pairEvents = await prisma.event.findMany({
+    where: { id: { in: eventIds } },
+    select: { id: true, slug: true, inviteScope: true },
+  });
+  const labels = buildInviteLabels(pairEvents, event.id);
+
   const guests = await prisma.guest.findMany({
-    where: { eventId: req.params.id },
+    where: { eventId: { in: eventIds } },
     include: {
       rsvps: {
         include: { function: { select: { id: true, name: true } } },
@@ -830,15 +891,30 @@ async function listGuests(req, res) {
     },
     orderBy: { createdAt: 'desc' },
   });
-  return res.json({ ok: true, guests });
+
+  // Tag each guest with the invite they responded through, so the couple can
+  // tell a partial-invite guest from a full-invite one.
+  const tagged = guests.map((g) => ({ ...g, ...(labels.get(g.eventId) || {}) }));
+  return res.json({ ok: true, guests: tagged });
 }
 
 async function exportGuestsCSV(req, res) {
-  const event = await prisma.event.findUnique({ where: { id: req.params.id }, select: { id: true, ownerId: true, slug: true } });
+  const event = await prisma.event.findUnique({
+    where: { id: req.params.id },
+    select: { id: true, ownerId: true, slug: true, invitePairId: true },
+  });
   if (!ownerGuard(event, req.user.id)) return res.status(404).json({ ok: false, message: 'Event not found' });
 
+  // Same pair-wide scope as listGuests — one export covers both invite links.
+  const eventIds = await getPairEventIds(event);
+  const pairEvents = await prisma.event.findMany({
+    where: { id: { in: eventIds } },
+    select: { id: true, slug: true, inviteScope: true },
+  });
+  const labels = buildInviteLabels(pairEvents, event.id);
+
   const guests = await prisma.guest.findMany({
-    where: { eventId: req.params.id },
+    where: { eventId: { in: eventIds } },
     include: { rsvps: { include: { function: { select: { name: true } } } } },
   });
 
@@ -847,16 +923,18 @@ async function exportGuestsCSV(req, res) {
   const cell = (value) => `"${String(value ?? '').replace(/"/g, '""')}"`;
   const row = (values) => values.map(cell).join(',');
 
-  const lines = ['Name,Phone,Email,Side,Tags,Function,Attending,+1s,Meal,Message'];
+  // "Invite" is appended last so existing column positions are unchanged.
+  const lines = ['Name,Phone,Email,Side,Tags,Function,Attending,+1s,Meal,Message,Invite'];
   for (const g of guests) {
+    const invite = labels.get(g.eventId)?.inviteSlug || '';
     if (g.rsvps.length === 0) {
-      lines.push(row([g.name, g.phone || '', g.email || '', g.side || '', g.tags || '', '—', 'Pending', '0', '', '']));
+      lines.push(row([g.name, g.phone || '', g.email || '', g.side || '', g.tags || '', '—', 'Pending', '0', '', '', invite]));
     } else {
       for (const r of g.rsvps) {
         const attending = r.attending === true ? 'Yes' : r.attending === false ? 'No' : 'Pending';
         lines.push(row([
           g.name, g.phone || '', g.email || '', g.side || '', g.tags || '',
-          r.function.name, attending, r.plusCount, r.mealPreference || '', r.message || '',
+          r.function.name, attending, r.plusCount, r.mealPreference || '', r.message || '', invite,
         ]));
       }
     }
