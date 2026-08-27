@@ -123,7 +123,7 @@ async function markPaymentPaid(payment, mihpayid) {
   ]);
 
   if (updated.customerEmail) {
-    const onboardingUrl = `${siteUrls.landingUrl()}/onboarding?paymentId=${encodeURIComponent(updated.id)}&slug=${encodeURIComponent(updated.template.slug)}&template=${encodeURIComponent(updated.template.name)}${updated.orderId ? `&orderId=${encodeURIComponent(updated.orderId)}` : ''}`;
+    const onboardingUrl = `${siteUrls.landingUrl()}/onboarding?paymentId=${encodeURIComponent(updated.id)}&slug=${encodeURIComponent(updated.template.slug)}&template=${encodeURIComponent(updated.template.name)}${updated.orderId ? `&orderId=${encodeURIComponent(updated.orderId)}` : ''}&amount=${updated.amount}`;
     sendPurchaseConfirmationEmail({
       to: updated.customerEmail,
       templateName: updated.template.name,
@@ -281,7 +281,7 @@ router.post('/payu-success', async (req, res) => {
       await markPaymentPaid(payment, mihpayid);
     }
 
-    const onboardingUrl = `${siteUrls.landingUrl()}/onboarding?paymentId=${encodeURIComponent(payment.id)}&slug=${encodeURIComponent(payment.template.slug)}&template=${encodeURIComponent(payment.template.name)}${payment.orderId ? `&orderId=${encodeURIComponent(payment.orderId)}` : ''}`;
+    const onboardingUrl = `${siteUrls.landingUrl()}/onboarding?paymentId=${encodeURIComponent(payment.id)}&slug=${encodeURIComponent(payment.template.slug)}&template=${encodeURIComponent(payment.template.name)}${payment.orderId ? `&orderId=${encodeURIComponent(payment.orderId)}` : ''}&amount=${payment.amount}`;
     return res.redirect(onboardingUrl);
   } catch (err) {
     console.error('[PayU] payu-success error:', err.message);
@@ -471,7 +471,7 @@ router.post('/mock-success', async (req, res) => {
     });
 
     if (payment.customerEmail) {
-      const onboardingUrl = `${siteUrls.landingUrl()}/onboarding?paymentId=${encodeURIComponent(payment.id)}&slug=${encodeURIComponent(payment.template.slug)}&template=${encodeURIComponent(payment.template.name)}${payment.orderId ? `&orderId=${encodeURIComponent(payment.orderId)}` : ''}`;
+      const onboardingUrl = `${siteUrls.landingUrl()}/onboarding?paymentId=${encodeURIComponent(payment.id)}&slug=${encodeURIComponent(payment.template.slug)}&template=${encodeURIComponent(payment.template.name)}${payment.orderId ? `&orderId=${encodeURIComponent(payment.orderId)}` : ''}&amount=${payment.amount}`;
       sendPurchaseConfirmationEmail({
         to: payment.customerEmail,
         templateName: payment.template.name,
