@@ -426,6 +426,15 @@ function buildInvitationData(event) {
     wedding_date_iso,
     wedding_date: wedding_date_display,
 
+    // "Links & guest features" is the single source of truth for these. Re-applied
+    // after ...custom so a legacy custom field of the same key (e.g. instagram_url,
+    // hashtag) can no longer shadow what the couple entered on that screen.
+    instagram_url,
+    hashtag,
+    hashtag_raw: hashtagBare,
+    social_youtube_url,
+    website_url,
+
     // Pinned template file snapshot (live + preview). Demo leaves these empty.
     template_version_number,
     template_version_label,
@@ -585,6 +594,15 @@ function buildDemoData(demoData) {
 
     wedding_date_iso,
     wedding_date: wedding_date_display || demoData.weddingDate || '',
+
+    // "Demo Data — Links & Guests" is the single source of truth for these.
+    // Re-applied after ...custom so a legacy custom field of the same key
+    // (e.g. instagram_url, hashtag) can no longer shadow the demo values.
+    instagram_url:       demoData.instagramUrl || demoData.instagram_url || '',
+    hashtag:             demoHashtag ? `#${demoHashtag}` : '',
+    hashtag_raw:         demoHashtag,
+    social_youtube_url:  demoData.socialYoutubeUrl || demoData.social_youtube_url || '',
+    website_url:         demoData.websiteUrl || demoData.website_url || '',
 
     template_version_number: '',
     template_version_label: '',
