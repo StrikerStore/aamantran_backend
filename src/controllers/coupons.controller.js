@@ -25,7 +25,7 @@ async function list(req, res) {
 }
 
 async function create(req, res) {
-  const { code, discountPercent, expiresAt, maxGlobalUses, maxUsesPerUser, minOrderAmount, isActive = true } = req.body || {};
+  const { code, discountPercent, expiresAt, maxGlobalUses, maxUsesPerUser, minOrderAmount, isActive = true, isDisplayed = false } = req.body || {};
   const normalized = String(code || '').trim().toUpperCase();
   const pct = Number(discountPercent);
 
@@ -62,6 +62,9 @@ async function create(req, res) {
       maxUsesPerUser: perUserLimit === null ? null : Math.round(perUserLimit),
       minOrderAmount: Math.round(minAmountRupees * 100),
       isActive: Boolean(isActive),
+      // Advertising a coupon that does not work would be worse than not
+      // advertising it, so display always implies active.
+      isDisplayed: Boolean(isDisplayed) && Boolean(isActive),
     },
   });
 
@@ -69,7 +72,7 @@ async function create(req, res) {
 }
 
 async function update(req, res) {
-  const { discountPercent, expiresAt, maxGlobalUses, maxUsesPerUser, minOrderAmount, isActive } = req.body || {};
+  const { discountPercent, expiresAt, maxGlobalUses, maxUsesPerUser, minOrderAmount, isActive, isDisplayed } = req.body || {};
   const data = {};
   if (discountPercent !== undefined) {
     const pct = Number(discountPercent);
@@ -78,7 +81,30 @@ async function update(req, res) {
     }
     data.discountPercent = Math.round(pct);
   }
-  if (isActive !== undefined) data.isActive = Boolean(isActive);
+  if (isActive !== undefined) {
+    data.isActive = Boolean(isActive);
+    // Disabling a coupon also unpublishes it: a live offer strip must never
+    // advertise a code that the apply step will refuse.
+    if (!data.isActive) data.isDisplayed = false;
+  }
+  if (isDisplayed !== undefined) {
+    const wantDisplayed = Boolean(isDisplayed);
+    if (wantDisplayed) {
+      // The coupon must end this request active. It may be being activated in
+      // the same call; otherwise fall back to what is stored, so display cannot
+      // be switched on for a coupon that is already disabled.
+      const willBeActive = data.isActive !== undefined
+        ? data.isActive
+        : (await prisma.couponCode.findUnique({
+            where:  { id: req.params.id },
+            select: { isActive: true },
+          }))?.isActive;
+      if (!willBeActive) {
+        return res.status(400).json({ ok: false, message: 'A disabled coupon cannot be shown on checkout' });
+      }
+    }
+    data.isDisplayed = wantDisplayed;
+  }
   if (expiresAt !== undefined) {
     if (!expiresAt) data.expiresAt = null;
     else {

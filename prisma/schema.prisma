@@ -482,6 +482,10 @@ model CouponCode {
   maxUsesPerUser  Int?
   minOrderAmount  Int?     @default(0) // paise
   isActive        Boolean  @default(true)
+  /// Advertise this coupon on the public checkout page. Distinct from isActive:
+  /// an undisplayed coupon still works when typed. Off by default so a partner
+  /// or one-off code is never published by accident.
+  isDisplayed     Boolean  @default(false)
   createdAt       DateTime @default(now())
   updatedAt       DateTime @updatedAt
 }

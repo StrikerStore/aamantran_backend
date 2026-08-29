@@ -5,6 +5,7 @@ const { v4: uuidv4 } = require('uuid');
 const prisma  = require('../utils/prisma');
 const { generateOrderId } = require('../utils/generateId');
 const { EXCLUDE_SANDBOX_TEMPLATE } = require('../utils/testFilters');
+const { getCouponDiscount, listEligibleCoupons } = require('../services/coupon.service');
 const { checkoutLimiter, lookupLimiter } = require('../middleware/rateLimits');
 const {
   buildPaymentParams,
@@ -61,53 +62,6 @@ function inferEventTypeFromTemplate(template) {
   return first || 'wedding';
 }
 
-async function getCouponDiscount(baseAmount, couponCodeRaw, customerEmailRaw) {
-  const code = String(couponCodeRaw || '').trim().toUpperCase();
-  if (!code) return { code: '', discountPct: 0, discountAmount: 0 };
-  const customerEmail = String(customerEmailRaw || '').trim().toLowerCase();
-
-  const coupon = await prisma.couponCode.findUnique({
-    where: { code },
-    select: {
-      code: true,
-      discountPercent: true,
-      isActive: true,
-      expiresAt: true,
-      maxGlobalUses: true,
-      maxUsesPerUser: true,
-      minOrderAmount: true,
-    },
-  });
-  if (!coupon || !coupon.isActive) return { code, discountPct: 0, discountAmount: 0 };
-  if (coupon.expiresAt && new Date(coupon.expiresAt).getTime() < Date.now()) {
-    return { code, discountPct: 0, discountAmount: 0, reason: 'Coupon expired' };
-  }
-  if ((coupon.minOrderAmount || 0) > baseAmount) {
-    return { code, discountPct: 0, discountAmount: 0, reason: `Minimum order is INR ${(coupon.minOrderAmount / 100).toLocaleString('en-IN')}` };
-  }
-
-  if (coupon.maxGlobalUses) {
-    const totalPaidUses = await prisma.payment.count({
-      where: { couponCode: code, status: 'paid' },
-    });
-    if (totalPaidUses >= coupon.maxGlobalUses) {
-      return { code, discountPct: 0, discountAmount: 0, reason: 'Coupon usage limit reached' };
-    }
-  }
-
-  if (coupon.maxUsesPerUser && customerEmail) {
-    const paidUsesByUser = await prisma.payment.count({
-      where: { couponCode: code, customerEmail, status: 'paid' },
-    });
-    if (paidUsesByUser >= coupon.maxUsesPerUser) {
-      return { code, discountPct: 0, discountAmount: 0, reason: 'Per-user usage limit reached' };
-    }
-  }
-
-  const discountPct = Math.max(0, Math.min(100, Number(coupon.discountPercent || 0)));
-  const discountAmount = Math.round((baseAmount * discountPct) / 100);
-  return { code: coupon.code, discountPct, discountAmount };
-}
 
 // ─── Helper: mark a payment as paid and fire purchase email ──────────────────
 
@@ -153,6 +107,40 @@ async function markPaymentPaid(payment, mihpayid) {
 
   return updated;
 }
+
+// GET /api/checkout/coupons?templateSlug=...&customerEmail=...
+//
+// The coupons a customer could actually use on this order. Only coupons an
+// admin has marked `isDisplayed` are candidates, and each still has to pass the
+// same eligibility rules that /coupon-preview applies -- so anything listed here
+// will succeed when applied.
+//
+// customerEmail is optional: the page renders before it is typed. Passing it
+// removes coupons that customer has already used up.
+router.get('/coupons', async (req, res) => {
+  try {
+    const { templateSlug, customerEmail } = req.query || {};
+    if (!templateSlug) return res.status(400).json({ message: 'templateSlug is required' });
+
+    const template = await prisma.template.findUnique({
+      where:  { slug: String(templateSlug), isActive: true, ...EXCLUDE_SANDBOX_TEMPLATE },
+      select: { price: true },
+    });
+    if (!template) return res.status(404).json({ message: 'Template not found' });
+
+    const coupons = await listEligibleCoupons({
+      baseAmount:    template.price,
+      customerEmail: customerEmail || null,
+    });
+
+    // An empty list is an ordinary outcome, not an error -- most orders will
+    // have no running campaign.
+    return res.json({ coupons });
+  } catch {
+    // Never break checkout over the offers strip; the code input still works.
+    return res.json({ coupons: [] });
+  }
+});
 
 // POST /api/checkout/coupon-preview
 router.post('/coupon-preview', async (req, res) => {
