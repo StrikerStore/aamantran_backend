@@ -4,6 +4,7 @@ const bcrypt  = require('bcrypt');
 const { v4: uuidv4 } = require('uuid');
 const prisma  = require('../utils/prisma');
 const { generateOrderId } = require('../utils/generateId');
+const { EXCLUDE_SANDBOX_TEMPLATE } = require('../utils/testFilters');
 const { checkoutLimiter, lookupLimiter } = require('../middleware/rateLimits');
 const {
   buildPaymentParams,
@@ -143,7 +144,7 @@ router.post('/coupon-preview', async (req, res) => {
     if (!templateSlug) return res.status(400).json({ message: 'templateSlug is required' });
 
     const template = await prisma.template.findUnique({
-      where: { slug: templateSlug, isActive: true },
+      where: { slug: templateSlug, isActive: true, ...EXCLUDE_SANDBOX_TEMPLATE },
       select: { price: true, gstPercent: true },
     });
     if (!template) return res.status(404).json({ message: 'Template not found' });
@@ -183,7 +184,7 @@ router.post('/order', async (req, res) => {
     }
 
     const template = await prisma.template.findUnique({
-      where: { slug: templateSlug, isActive: true },
+      where: { slug: templateSlug, isActive: true, ...EXCLUDE_SANDBOX_TEMPLATE },
       select: { id: true, slug: true, name: true, price: true, gstPercent: true },
     });
     if (!template) return res.status(404).json({ message: 'Template not found' });

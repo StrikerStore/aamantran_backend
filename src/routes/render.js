@@ -101,6 +101,32 @@ function injectDemoBuyBar(html, templateSlug) {
   return html + bar;
 }
 
+/**
+ * Let the Template Lab embed an invite in its device-preview iframe.
+ *
+ * helmet runs with `useDefaults`, which emits `frame-ancestors 'self'` — that
+ * blocks the Lab's preview panel. Widened for test events ONLY: a real couple's
+ * invitation keeps 'self' so it can never be framed by another origin. The rest
+ * of helmet's policy is preserved by rewriting just this one directive.
+ */
+function allowLabFraming(res) {
+  const existing = res.getHeader('Content-Security-Policy');
+  if (!existing) return;
+
+  const lab = siteUrls.labUrl();
+  const replacement = `frame-ancestors 'self' ${lab}`;
+  const directives = String(existing)
+    .split(';')
+    .map((d) => d.trim())
+    .filter(Boolean);
+
+  const idx = directives.findIndex((d) => d.toLowerCase().startsWith('frame-ancestors'));
+  if (idx === -1) directives.push(replacement);
+  else directives[idx] = replacement;
+
+  res.setHeader('Content-Security-Policy', directives.join('; '));
+}
+
 function detectVariant(req) {
   const forced = String(req.query.view || '').toLowerCase();
   if (forced === 'mobile' || forced === 'desktop') return forced;
@@ -135,6 +161,10 @@ router.get('/demo/:slug', async (req, res) => {
   });
 
   if (!template) return res.status(404).send('<h1>Template not found</h1>');
+  // Template Lab uploads are private to their developer and have no store
+  // listing — /demo would wrap them in a "Buy now" bar for something nobody
+  // can buy. Developers preview through /i/lab-<handle> instead.
+  if (template.sandboxOwnerId) return res.status(404).send('<h1>Template not found</h1>');
   if (!template.demoData) return res.status(404).send('<h1>No demo data configured for this template</h1>');
 
   const data = buildDemoData(template.demoData);
@@ -238,7 +268,10 @@ router.get('/i/:slug', async (req, res) => {
   setNoCacheHeaders(res);
   // The testing invite sits on a stable, guessable slug and may be rendering an
   // unreleased template — keep it out of search results.
-  if (event.isTestEvent) res.setHeader('X-Robots-Tag', 'noindex, nofollow, noarchive');
+  if (event.isTestEvent) {
+    res.setHeader('X-Robots-Tag', 'noindex, nofollow, noarchive');
+    allowLabFraming(res);
+  }
   res.setHeader('Content-Type', 'text/html; charset=utf-8');
   res.send(html);
 });
@@ -290,6 +323,11 @@ router.get('/i/:slug/preview', async (req, res) => {
   });
 
   setNoCacheHeaders(res);
+  // The Lab previews unpublished sandbox invites through this route.
+  if (event.isTestEvent) {
+    res.setHeader('X-Robots-Tag', 'noindex, nofollow, noarchive');
+    allowLabFraming(res);
+  }
   res.setHeader('Content-Type', 'text/html; charset=utf-8');
   res.send(html);
 });

@@ -2,7 +2,7 @@
 const express = require('express');
 const prisma  = require('../utils/prisma');
 const { publicInviteLimiter } = require('../middleware/rateLimits');
-const { EXCLUDE_TEST_OWNER } = require('../utils/testFilters');
+const { EXCLUDE_TEST_OWNER, EXCLUDE_SANDBOX_TEMPLATE } = require('../utils/testFilters');
 
 const router = express.Router();
 router.use(publicInviteLimiter);
@@ -15,6 +15,7 @@ router.get('/', async (req, res) => {
 
   const where = {
     isActive: true,
+    ...EXCLUDE_SANDBOX_TEMPLATE,
     ...(community  && { community }),
     ...(eventType  && { bestFor: { contains: eventType } }),
     ...(exclude    && { slug: { not: exclude } }),
@@ -86,7 +87,7 @@ router.get('/featured', async (req, res) => {
 // GET /api/templates/:slug — single template detail for product page
 router.get('/:slug', async (req, res) => {
   const template = await prisma.template.findUnique({
-    where: { slug: req.params.slug, isActive: true },
+    where: { slug: req.params.slug, isActive: true, ...EXCLUDE_SANDBOX_TEMPLATE },
     select: {
       id: true, slug: true, name: true,
       thumbnailUrl: true, desktopThumbnailUrl: true, mobileThumbnailUrl: true, community: true,

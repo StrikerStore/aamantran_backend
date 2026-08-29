@@ -23,8 +23,21 @@ const EXCLUDE_TEST_EVENT = { isTestEvent: false };
  */
 const EXCLUDE_TEST_OWNER = { NOT: { user: { is: { isTestAccount: true } } } };
 
+/**
+ * Template-rooted queries: the public gallery, checkout, the admin catalogue
+ * and /demo.
+ *
+ * Templates uploaded through the Template Lab carry a `sandboxOwnerId`; real
+ * catalogue templates have NULL. Sandbox rows are also `isActive: false`, so
+ * most of these queries would exclude them anyway — this filter makes the
+ * guarantee explicit rather than incidental, so a stray activate can't put a
+ * developer's experiment in front of a buyer.
+ */
+const EXCLUDE_SANDBOX_TEMPLATE = { sandboxOwnerId: null };
+
 module.exports = {
   EXCLUDE_TEST_USER,
   EXCLUDE_TEST_EVENT,
   EXCLUDE_TEST_OWNER,
+  EXCLUDE_SANDBOX_TEMPLATE,
 };

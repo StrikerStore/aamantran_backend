@@ -16,6 +16,8 @@
     "jobs:retention": "node scripts/run-retention.js",
     "notify:dpdp": "node scripts/send-dpdp-notice.js",
     "test:account": "node scripts/ensure-test-account.js",
+    "dev:account": "node scripts/create-dev-account.js",
+    "storage:orphans": "node scripts/cleanup-orphan-templates.js",
     "dev": "nodemon src/server.js",
     "db:migrate": "prisma migrate dev",
     "db:generate": "prisma generate",

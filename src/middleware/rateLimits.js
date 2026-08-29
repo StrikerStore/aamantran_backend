@@ -1,4 +1,5 @@
 const rateLimit = require('express-rate-limit');
+const { ipKeyGenerator } = require('express-rate-limit');
 
 /** Skip rate limiting for health checks */
 function skipHealth(req) {
@@ -64,9 +65,36 @@ const trackLimiter = rateLimit({
   message: { ok: false },
 });
 
+/**
+ * Template Lab ZIP uploads.
+ *
+ * Keyed on the developer, not the IP: a studio behind one office NAT would
+ * otherwise share a single budget and throttle each other.
+ *
+ * The cap is deliberately loose. Re-uploading is the loop a template developer
+ * repeats all day, so a limiter tight enough to interrupt honest work would be
+ * worse than none at all — this exists to bound a runaway script (each upload
+ * extracts an archive and rewrites asset paths), not to ration the workflow.
+ * The per-developer template cap bounds total storage separately.
+ */
+const labUploadLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: Number(process.env.RATE_LIMIT_LAB_UPLOAD_MAX || 60),
+  standardHeaders: true,
+  legacyHeaders: false,
+  // req.dev is set by middleware/devAuth.js, which always runs first on these
+  // routes. Falling back to the IP keeps the limiter safe if that ever changes.
+  keyGenerator: (req) => (req.dev?.id ? `dev:${req.dev.id}` : ipKeyGenerator(req)),
+  message: {
+    ok: false,
+    message: 'Too many uploads in a short window. Wait a few minutes and try again.',
+  },
+});
+
 module.exports = {
   globalLimiter,
   authLoginLimiter,
+  labUploadLimiter,
   recoveryLimiter,
   checkoutLimiter,
   publicInviteLimiter,

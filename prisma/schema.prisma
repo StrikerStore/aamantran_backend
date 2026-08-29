@@ -38,6 +38,12 @@ model Template {
 
   fieldSchema   Json?             // { people, customFields, mediaSlots?, functionFields } — drives the invitation form
 
+  /// Set only on templates uploaded through the Template Lab. Its presence *is*
+  /// the sandbox flag — there is no second boolean to drift out of sync. Every
+  /// catalogue-facing query filters `sandboxOwnerId: null` (utils/testFilters.js).
+  sandboxOwnerId String?
+  sandboxOwner   DeveloperAccount? @relation(fields: [sandboxOwnerId], references: [id], onDelete: Cascade)
+
   // ── Versioning ──
   // draft folder (templates/{folderPath}/draft/) is mutable — used by /demo and overwritten on every ZIP re-upload.
   // Published snapshots live at templates/{folderPath}/v{n}/ and are pinned per Event for render stability.
@@ -50,6 +56,32 @@ model Template {
   reviews       TemplateReview[]
   swapRequests  TemplateSwapRequest[]
   versions      TemplateVersion[]  @relation("TemplateVersions")
+
+  @@index([sandboxOwnerId])
+}
+
+/// Template Lab account — an external template developer.
+///
+/// Each one owns a paired `sandboxUser` (a normal User flagged isTestAccount)
+/// so the sandbox Event has a real owner and every existing test-data filter in
+/// utils/testFilters.js excludes it from analytics, cron and retention for free.
+model DeveloperAccount {
+  id            String   @id @default(uuid())
+  email         String   @unique
+  name          String
+  /// Slug fragment for the permanent sandbox invite: "arjun" → /i/lab-arjun
+  handle        String   @unique
+  passwordHash  String
+  isActive      Boolean  @default(true)
+  sandboxUserId String   @unique
+  sandboxUser   User     @relation(fields: [sandboxUserId], references: [id])
+  /// Cap on sandbox templates, enforced before a ZIP is extracted.
+  templateLimit Int      @default(10)
+  lastLoginAt   DateTime?
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  templates     Template[]
 }
 
 // Immutable snapshot of a template's files taken on publish / publish-changes.
@@ -174,6 +206,8 @@ model User {
   reviews       TemplateReview[]
   tickets       SupportTicket[]
   swapRequests  TemplateSwapRequest[]
+  /// Present only on the sandbox user paired with a Template Lab developer.
+  developerAccount DeveloperAccount?
 
   @@index([email])
   @@index([isTestAccount])

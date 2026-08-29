@@ -14,4 +14,11 @@ router.post('/repin',            controller.repin);
 router.post('/session',          controller.createSession);
 router.post('/reset',            controller.reset);
 
+// ── Template Lab developer accounts ──
+router.get   ('/developers',                          controller.listDevelopers);
+router.post  ('/developers',                          controller.createDeveloperAccount);
+router.post  ('/developers/:handle/rotate-password',  controller.rotateDeveloper);
+router.patch ('/developers/:handle/active',           controller.setDeveloperAccess);
+router.delete('/developers/:handle',                  controller.removeDeveloper);
+
 module.exports = router;

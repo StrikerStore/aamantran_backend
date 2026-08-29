@@ -16,10 +16,14 @@ const prisma = require('../utils/prisma');
 const siteUrls = require('../config/siteUrls');
 const { userJwtSecret, passwordVersion } = require('../utils/authSecurity');
 const { mintInvitePreviewToken } = require('../services/previewToken');
+const { deleteTemplateFolder, draftFolderName } = require('../services/fileManager');
 const {
   TEST_USERNAME, TEST_EMAIL, TEST_SLUG,
   findTestUser, ensureTestAccount, rotatePassword, purgeTestEvents,
 } = require('../services/testAccount.service');
+const {
+  createDeveloper, rotateDeveloperPassword, setDeveloperActive,
+} = require('../services/developerAccount.service');
 
 /** Mirrors the helper in routes/publicCheckout.js — first entry of `bestFor`. */
 function inferEventTypeFromTemplate(template) {
@@ -289,6 +293,116 @@ async function reset(req, res) {
   res.json({ ok: true, cleared });
 }
 
+/* ── Template Lab developer accounts ──────────────────────────────────────
+ *
+ * The Lab is used by external contractors, so credentials are issued and
+ * revoked here rather than over a shell. Passwords are shown exactly once at
+ * creation or rotation and are never retrievable afterwards.
+ */
+
+// GET /api/v1/testing/developers
+async function listDevelopers(_req, res) {
+  const developers = await prisma.developerAccount.findMany({
+    orderBy: { createdAt: 'desc' },
+    select: {
+      id: true, name: true, handle: true, email: true,
+      isActive: true, templateLimit: true, lastLoginAt: true, createdAt: true,
+      _count: { select: { templates: true } },
+    },
+  });
+
+  const api = siteUrls.apiBaseUrl();
+  res.json({
+    ok: true,
+    labUrl: siteUrls.labUrl(),
+    developers: developers.map((d) => ({
+      ...d,
+      templateCount: d._count.templates,
+      _count: undefined,
+      inviteUrl: `${api}/i/lab-${d.handle}`,
+    })),
+  });
+}
+
+// POST /api/v1/testing/developers
+// Body: { email, name, handle, password?, templateLimit? }
+// Returns the plaintext password exactly once.
+async function createDeveloperAccount(req, res) {
+  const { email, name, handle, password, templateLimit } = req.body || {};
+  const { developer, generatedPassword } = await createDeveloper({
+    email, name, handle, password, templateLimit,
+  });
+  res.status(201).json({
+    ok: true,
+    developer,
+    generatedPassword,
+    labUrl: siteUrls.labUrl(),
+    inviteUrl: `${siteUrls.apiBaseUrl()}/i/lab-${developer.handle}`,
+  });
+}
+
+// POST /api/v1/testing/developers/:handle/rotate-password   Body: { password? }
+async function rotateDeveloper(req, res) {
+  const { password } = req.body || {};
+  const { developer, generatedPassword } = await rotateDeveloperPassword(req.params.handle, password);
+  res.json({
+    ok: true,
+    developer: { id: developer.id, handle: developer.handle },
+    generatedPassword,
+  });
+}
+
+// PATCH /api/v1/testing/developers/:handle/active   Body: { isActive }
+// devAuth re-reads this flag on every request, so revocation is immediate.
+async function setDeveloperAccess(req, res) {
+  const { isActive } = req.body || {};
+  const developer = await setDeveloperActive(req.params.handle, isActive);
+  res.json({ ok: true, developer });
+}
+
+// DELETE /api/v1/testing/developers/:handle
+// Removes the developer, their sandbox templates (FK cascade), the paired
+// sandbox user, and the uploaded template folders.
+//
+// Storage is collected BEFORE the cascade runs: once the Template rows are
+// gone there is nothing left pointing at those folders, and they would sit in
+// the bucket forever with no way to attribute them.
+async function removeDeveloper(req, res) {
+  const key = String(req.params.handle || '').trim().toLowerCase();
+  const dev = await prisma.developerAccount.findFirst({
+    where:  { OR: [{ handle: key }, { email: key }] },
+    select: { id: true, handle: true, sandboxUserId: true },
+  });
+  if (!dev) return res.status(404).json({ ok: false, message: 'Developer not found' });
+
+  const templates = await prisma.template.findMany({
+    where:  { sandboxOwnerId: dev.id },
+    select: { slug: true, folderPath: true },
+  });
+
+  // The sandbox event references a template, so it has to go before the
+  // cascade removes them.
+  const cleared = await purgeTestEvents(dev.sandboxUserId);
+  await prisma.developerAccount.delete({ where: { id: dev.id } });
+  await prisma.user.delete({ where: { id: dev.sandboxUserId } });
+
+  // After the rows are committed: a storage failure must not leave a
+  // half-deleted account behind, so these are best-effort.
+  let foldersRemoved = 0;
+  for (const t of templates) {
+    for (const folder of [draftFolderName(t.slug), t.folderPath]) {
+      try {
+        await deleteTemplateFolder(folder);
+        foldersRemoved += 1;
+      } catch (err) {
+        console.error(`[testing] could not delete template folder ${folder}:`, err.message);
+      }
+    }
+  }
+
+  res.json({ ok: true, cleared, templates: templates.length, foldersRemoved });
+}
+
 module.exports = {
   status,
   ensureAccount,
@@ -298,4 +412,9 @@ module.exports = {
   repin,
   createSession,
   reset,
+  listDevelopers,
+  createDeveloperAccount,
+  rotateDeveloper,
+  setDeveloperAccess,
+  removeDeveloper,
 };

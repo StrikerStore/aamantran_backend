@@ -14,7 +14,7 @@ const siteUrls     = require('../config/siteUrls');
 const storage      = require('../config/storage');
 const objectStorage = require('../services/objectStorage');
 const { normalizeDemoCustomFieldRows } = require('../utils/dateNormalize');
-const { EXCLUDE_TEST_EVENT } = require('../utils/testFilters');
+const { EXCLUDE_TEST_EVENT, EXCLUDE_SANDBOX_TEMPLATE } = require('../utils/testFilters');
 const { purgeTestEvents } = require('../services/testAccount.service');
 
 // GET /api/v1/templates
@@ -22,7 +22,9 @@ async function list(req, res) {
   const { status, community, eventType, page = 1, limit = 20 } = req.query;
   const skip = (Number(page) - 1) * Number(limit);
 
-  const where = {};
+  // Template Lab uploads are a developer's private workspace — they never
+  // belong in the admin catalogue listing.
+  const where = { ...EXCLUDE_SANDBOX_TEMPLATE };
   if (status === 'active') where.isActive = true;
   if (status === 'draft')  where.isActive = false;
   if (community)           where.community = community;

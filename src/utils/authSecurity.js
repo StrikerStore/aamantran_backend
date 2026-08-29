@@ -13,6 +13,11 @@ function userJwtSecret() {
   return process.env.JWT_SECRET_USER || process.env.JWT_SECRET;
 }
 
+/** Template Lab developers — a separate audience from admins and couples. */
+function devJwtSecret() {
+  return process.env.JWT_SECRET_DEV || process.env.JWT_SECRET;
+}
+
 /**
  * Short fingerprint of the stored bcrypt hash, embedded in user JWTs as `pv`.
  * Changing the password changes the fingerprint, which invalidates every
@@ -59,6 +64,7 @@ function validateNewPassword(password) {
 module.exports = {
   adminJwtSecret,
   userJwtSecret,
+  devJwtSecret,
   passwordVersion,
   timingSafeEqualStr,
   validateNewPassword,

@@ -47,6 +47,12 @@ router.use('/api/user/events',     userEventRoutes);
 router.use('/api/user/tickets',    userTicketRoutes);
 router.use('/api/user',            userProfileRoutes);
 
+// ── Template Lab API (JWT-protected, role: dev) ──────────────────────
+// Separate issuer and secret from admin and couple tokens — an external
+// template developer must never be able to reach /api/v1/*.
+router.use('/api/dev/auth', require('./devAuth'));
+router.use('/api/dev',      require('./devLab'));
+
 // ── Public template/review endpoints (for landing page) ──────────────
 const publicTemplateRoutes = require('./publicTemplates');
 router.use('/api/templates',  publicTemplateRoutes);

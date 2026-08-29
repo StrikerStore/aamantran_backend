@@ -168,17 +168,23 @@ router.post('/rsvp', async (req, res) => {
     )
   );
 
-  await prisma.invitationEvent.create({
-    data: {
-      eventId: event.id,
-      guestId: guest.id,
-      type: 'rsvp_submitted',
-      metadata: {
-        functionIds: selectedFunctionIds,
-        ip,
+  // Skipped for test invitations (the master testing account and Template Lab
+  // sandboxes) for the same reason routes/render.js skips 'opened': QA runs and
+  // template-developer smoke tests must not show up as real guest activity in
+  // the couple-facing analytics.
+  if (!event.isTestEvent) {
+    await prisma.invitationEvent.create({
+      data: {
+        eventId: event.id,
+        guestId: guest.id,
+        type: 'rsvp_submitted',
+        metadata: {
+          functionIds: selectedFunctionIds,
+          ip,
+        },
       },
-    },
-  }).catch(() => {});
+    }).catch(() => {});
+  }
 
   return res.json({ success: true, guestId: guest.id });
 });

@@ -111,6 +111,9 @@ const localhostOrigins = process.env.NODE_ENV !== 'production'
       'http://127.0.0.1:5173',
       'http://localhost:5174',
       'http://127.0.0.1:5174',
+      // Template Lab
+      'http://localhost:5175',
+      'http://127.0.0.1:5175',
     ]
   : [];
 
@@ -120,6 +123,7 @@ const allowedOrigins = Array.from(
       toOrigin(siteUrls.landingUrl()),
       toOrigin(siteUrls.adminUrl()),
       toOrigin(siteUrls.coupleDashboardUrl()),
+      toOrigin(siteUrls.labUrl()),
       toOrigin(siteUrls.apiBaseUrl()),
       toOrigin(process.env.R2_PUBLIC_BASE_URL),
       // PayU posts form callbacks (success/failure/swap) from its own domain

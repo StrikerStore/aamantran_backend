@@ -10,12 +10,14 @@ const DEFAULTS = {
     LANDING_URL: 'http://localhost:3000',
     COUPLE_DASHBOARD_URL: 'http://localhost:3001',
     ADMIN_URL: 'http://localhost:5174',
+    LAB_URL: 'http://localhost:5175',
   },
   prod: {
     API_BASE_URL: 'https://api.aamantran.online',
     LANDING_URL: 'https://www.aamantran.online',
     COUPLE_DASHBOARD_URL: 'https://app.aamantran.online',
     ADMIN_URL: 'https://admin.aamantran.online',
+    LAB_URL: 'https://lab.aamantran.online',
   },
 };
 
@@ -33,4 +35,6 @@ module.exports = {
   landingUrl: () => pick('LANDING_URL'),
   coupleDashboardUrl: () => pick('COUPLE_DASHBOARD_URL'),
   adminUrl: () => pick('ADMIN_URL'),
+  /** Template Lab — the external template developers' sandbox app. */
+  labUrl: () => pick('LAB_URL'),
 };
