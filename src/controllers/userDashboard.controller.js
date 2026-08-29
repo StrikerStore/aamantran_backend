@@ -1,7 +1,12 @@
 const prisma  = require('../utils/prisma');
 const path    = require('path');
 const { v4: uuidv4 } = require('uuid');
-const { sendInvitationPublishedEmail } = require('../services/email.service');
+const {
+  sendInvitationPublishedEmail,
+  sendAdminTicketRaisedEmail,
+  sendTicketReceivedEmail,
+  sendAdminReviewPostedEmail,
+} = require('../services/email.service');
 const { addEventMedia, removeEventMedia } = require('../services/eventMedia.service');
 const { normalizeOptionalHttpUrl, normalizeOptionalHashtag } = require('../utils/urlNormalize');
 const siteUrls = require('../config/siteUrls');
@@ -1034,9 +1039,63 @@ async function createTicket(req, res) {
       subject,
       messages: { create: { senderRole: 'user', body: message } },
     },
-    include: { messages: true },
+    include: {
+      messages: true,
+      user:  { select: { username: true, email: true } },
+      event: { select: { slug: true, brideName: true, groomName: true } },
+    },
   });
+
+  // Fire-and-forget on both sides: the ticket is already saved, and a mail
+  // outage must not turn a successful submission into an error the customer
+  // sees and retries.
+  notifyTicketRaised(ticket).catch((err) => console.error('[Email Error]', err.message));
+
   return res.status(201).json({ ok: true, ticket });
+}
+
+/**
+ * Short human reference for a ticket.
+ *
+ * SupportTicket has no ticket-number column — the primary key is a UUID, which
+ * is unusable over the phone or in a subject line. The first block of the UUID
+ * is stable, unique enough to search on, and needs no migration.
+ */
+function ticketReference(ticketId) {
+  return `AT-${String(ticketId).replace(/-/g, '').slice(0, 8).toUpperCase()}`;
+}
+
+/** Team alert + customer acknowledgement for a newly opened ticket. */
+async function notifyTicketRaised(ticket) {
+  const ref = ticketReference(ticket.id);
+  const body = ticket.messages?.[0]?.body || '';
+  const raisedAt = new Date(ticket.createdAt).toLocaleString('en-IN', {
+    dateStyle: 'medium', timeStyle: 'short',
+  });
+  const coupleNames = [ticket.event?.groomName, ticket.event?.brideName].filter(Boolean).join(' & ');
+
+  await Promise.allSettled([
+    sendAdminTicketRaisedEmail({
+      ticketRef: ref,
+      ticketId:  ticket.id,
+      subject:   ticket.subject,
+      message:   body,
+      userName:  ticket.user?.username,
+      userEmail: ticket.user?.email,
+      eventName: ticket.event ? (coupleNames || ticket.event.slug) : null,
+      createdAt: raisedAt,
+      adminUrl:  `${siteUrls.adminUrl()}/tickets/${ticket.id}`,
+    }),
+    ticket.user?.email
+      ? sendTicketReceivedEmail({
+          to:        ticket.user.email,
+          name:      ticket.user.username,
+          ticketRef: ref,
+          subject:   ticket.subject,
+          message:   body,
+        })
+      : Promise.resolve(),
+  ]);
 }
 
 async function getTicket(req, res) {
@@ -1136,25 +1195,37 @@ async function submitReview(req, res) {
     }
   }
 
-  const review = await prisma.templateReview.upsert({
-    where: { templateId_userId: { templateId, userId: req.user.id } },
-    create: {
-      templateId, userId: req.user.id,
-      rating: Number(rating),
-      reviewText:     reviewText     || null,
-      coupleNames:    coupleNames    || null,
-      location:       location       || null,
-      couplePhotoUrl: couplePhotoUrl || null,
-    },
-    update: {
-      rating: Number(rating),
-      reviewText:     reviewText     || null,
-      coupleNames:    coupleNames    || null,
-      location:       location       || null,
-      // Only overwrite photo if a new one was uploaded
-      ...(couplePhotoUrl ? { couplePhotoUrl } : {}),
-    },
+  // Find-then-write rather than upsert.
+  //
+  // This used to be `upsert({ where: { templateId_userId: ... } })`, but the
+  // 20260424000000_reviews_hidden_admin migration DROPPED that unique index so
+  // admin-created reviews could carry a null userId. Prisma rejects a compound
+  // key that no longer exists, so every customer review submission threw. There
+  // is no unique constraint to upsert against any more, hence findFirst.
+  const existingReview = await prisma.templateReview.findFirst({
+    where:  { templateId, userId: req.user.id },
+    select: { id: true },
   });
+
+  const fields = {
+    rating: Number(rating),
+    reviewText:  reviewText  || null,
+    coupleNames: coupleNames || null,
+    location:    location    || null,
+  };
+
+  const review = existingReview
+    ? await prisma.templateReview.update({
+        where: { id: existingReview.id },
+        data:  {
+          ...fields,
+          // Only overwrite the photo when a new one was uploaded.
+          ...(couplePhotoUrl ? { couplePhotoUrl } : {}),
+        },
+      })
+    : await prisma.templateReview.create({
+        data: { templateId, userId: req.user.id, ...fields, couplePhotoUrl: couplePhotoUrl || null },
+      });
 
   // Update template avgRating
   const agg = await prisma.templateReview.aggregate({
@@ -1167,7 +1238,33 @@ async function submitReview(req, res) {
     data: { avgRating: agg._avg.rating || 0 },
   });
 
+  // Team alert. Edits are reported too, marked as such — an edited review still
+  // changes what the public store shows and can still need moderating.
+  notifyReviewPosted({ review, templateId, userId: req.user.id, isUpdate: Boolean(existingReview) })
+    .catch((err) => console.error('[Email Error]', err.message));
+
   return res.json({ ok: true, review });
+}
+
+/** Team alert for a new or edited review. */
+async function notifyReviewPosted({ review, templateId, userId, isUpdate }) {
+  const [template, user] = await Promise.all([
+    prisma.template.findUnique({ where: { id: templateId }, select: { name: true } }),
+    prisma.user.findUnique({ where: { id: userId }, select: { username: true, email: true } }),
+  ]);
+
+  await sendAdminReviewPostedEmail({
+    rating:       review.rating,
+    reviewText:   review.reviewText,
+    coupleNames:  review.coupleNames,
+    location:     review.location,
+    templateName: template?.name || templateId,
+    userName:     user?.username,
+    userEmail:    user?.email,
+    isUpdate,
+    postedAt:     new Date().toLocaleString('en-IN', { dateStyle: 'medium', timeStyle: 'short' }),
+    adminUrl:     `${siteUrls.adminUrl()}/reviews`,
+  });
 }
 
 module.exports = {

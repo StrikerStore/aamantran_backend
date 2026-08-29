@@ -14,6 +14,7 @@ const {
 const {
   sendPurchaseConfirmationEmail,
   sendOnboardingCompleteEmail,
+  sendAdminOrderPlacedEmail,
 } = require('../services/email.service');
 const siteUrls = require('../config/siteUrls');
 const { validateNewPassword } = require('../utils/authSecurity');
@@ -133,6 +134,22 @@ async function markPaymentPaid(payment, mihpayid) {
       onboardingUrl,
     }).catch(err => console.error('[Email Error]', err.message));
   }
+
+  // Team notification. Fired regardless of whether the buyer left an email, and
+  // never awaited: a mail failure must not roll back a payment that PayU has
+  // already taken.
+  sendAdminOrderPlacedEmail({
+    orderId:        updated.orderId,
+    templateName:   updated.template.name,
+    amount:         updated.amount,
+    discountAmount: updated.discountAmount,
+    couponCode:     updated.couponCode,
+    customerEmail:  updated.customerEmail,
+    paymentId:      updated.id,
+    mihpayid:       updated.payuMihpayid,
+    purchasedAt:    new Date().toLocaleString('en-IN', { dateStyle: 'medium', timeStyle: 'short' }),
+    adminUrl:       `${siteUrls.adminUrl()}/transactions/${updated.id}`,
+  }).catch(err => console.error('[Email Error]', err.message));
 
   return updated;
 }

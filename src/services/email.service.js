@@ -13,6 +13,12 @@ const {
   accountDeletedHtml,
   dpdpNoticeHtml,
 } = require('./emailTemplates');
+const {
+  adminOrderPlacedHtml,
+  adminTicketRaisedHtml,
+  adminReviewPostedHtml,
+  ticketReceivedHtml,
+} = require('./internalEmailTemplates');
 
 let _transport = null;
 function getTransport() {
@@ -223,8 +229,79 @@ async function sendPasswordChangedEmail({ to, username }) {
   });
 }
 
+/**
+ * Where team notifications go. CONTACT_FORM_TO already serves this purpose
+ * for the contact form, so it is reused rather than adding a second address
+ * to keep in sync; ADMIN_EMAIL is the fallback.
+ */
+function internalRecipient() {
+  return process.env.INTERNAL_NOTIFY_TO
+    || process.env.CONTACT_FORM_TO
+    || process.env.ADMIN_EMAIL
+    || null;
+}
+
+/**
+ * Send a team notification, or quietly do nothing if no address is set.
+ *
+ * Never throws: these fire from the middle of a purchase, a ticket or a
+ * review, and a mail outage must not fail the operation the customer is
+ * actually performing.
+ */
+async function sendInternalMail({ subject, html }) {
+  const to = internalRecipient();
+  if (!to) {
+    console.warn('[Email] No INTERNAL_NOTIFY_TO/CONTACT_FORM_TO/ADMIN_EMAIL set - skipping:', subject);
+    return null;
+  }
+  try {
+    return await sendMail({ to, subject, html });
+  } catch (err) {
+    console.error('[Email] Internal notification failed:', subject, '-', err.message);
+    return null;
+  }
+}
+
+/** Team alert: a template was purchased. */
+async function sendAdminOrderPlacedEmail(data) {
+  return sendInternalMail({
+    subject: `[Order] ${data.orderId || data.paymentId} - ${data.templateName}`,
+    html: adminOrderPlacedHtml(data),
+  });
+}
+
+/** Team alert: a support ticket was opened. */
+async function sendAdminTicketRaisedEmail(data) {
+  return sendInternalMail({
+    subject: `[Ticket ${data.ticketRef}] ${data.subject}`,
+    html: adminTicketRaisedHtml(data),
+  });
+}
+
+/** Team alert: a review was posted or edited. */
+async function sendAdminReviewPostedEmail(data) {
+  return sendInternalMail({
+    subject: `[Review] ${data.rating}/5 on ${data.templateName}${data.isUpdate ? ' (updated)' : ''}`,
+    html: adminReviewPostedHtml(data),
+  });
+}
+
+/** Customer-facing acknowledgement that their ticket reached us. */
+async function sendTicketReceivedEmail({ to, name, ticketRef, subject, message }) {
+  return sendMail({
+    to,
+    subject: `We received your request - ${ticketRef}`,
+    html: ticketReceivedHtml({ name, ticketRef, subject, message }),
+  });
+}
+
 module.exports = {
   sendMail,
+  sendInternalMail,
+  sendAdminOrderPlacedEmail,
+  sendAdminTicketRaisedEmail,
+  sendAdminReviewPostedEmail,
+  sendTicketReceivedEmail,
   sendBalancePaymentEmail,
   sendTicketReplyEmail,
   sendAccountRecoveryCodeEmail,

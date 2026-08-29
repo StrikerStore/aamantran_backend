@@ -384,6 +384,14 @@ function accountDeletedHtml({ username }) {
 }
 
 module.exports = {
+  // Shared layout pieces, reused by internalEmailTemplates.js
+  wrapInLayout,
+  infoCard,
+  infoRow,
+  divider,
+  BRAND,
+  GOLD,
+
   purchaseConfirmationHtml,
   onboardingReminderHtml,
   abandonedCheckoutHtml,
