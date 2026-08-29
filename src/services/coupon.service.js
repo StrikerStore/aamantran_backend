@@ -14,9 +14,14 @@
  */
 const prisma = require('../utils/prisma');
 
+/** Grouped rupee figure, no symbol. Amounts are stored in paise. */
+function rupeeAmount(paise) {
+  return Math.round(Number(paise || 0) / 100).toLocaleString('en-IN');
+}
+
 /** Rupee string for customer-facing copy. Amounts are stored in paise. */
 function rupees(paise) {
-  return `₹${Math.round(Number(paise || 0) / 100).toLocaleString('en-IN')}`;
+  return `₹${rupeeAmount(paise)}`;
 }
 
 /**
@@ -29,24 +34,29 @@ function rupees(paise) {
  * @param {number} opts.baseAmount       Order value in paise, before discount.
  * @param {number} [opts.globalUses]     Paid redemptions of this code, all customers.
  * @param {number} [opts.perUserUses]    Paid redemptions of this code by this customer.
- * @returns {{ eligible: boolean, discountPct: number, discountAmount: number, reason?: string }}
+ * `reasonCode` names the rule that refused the coupon, so callers can write
+ * their own copy for it without re-deciding which rule applied.
+ *
+ * @returns {{ eligible: boolean, discountPct: number, discountAmount: number, reason?: string, reasonCode?: string }}
  */
 function evaluateCoupon(coupon, { baseAmount, globalUses = 0, perUserUses = 0 } = {}) {
-  const no = (reason) => ({ eligible: false, discountPct: 0, discountAmount: 0, ...(reason ? { reason } : {}) });
+  const no = (reason, reasonCode) => ({
+    eligible: false, discountPct: 0, discountAmount: 0, ...(reason ? { reason, reasonCode } : {}),
+  });
 
   if (!coupon || !coupon.isActive) return no();
 
   if (coupon.expiresAt && new Date(coupon.expiresAt).getTime() < Date.now()) {
-    return no('Coupon expired');
+    return no('Coupon expired', 'expired');
   }
   if ((coupon.minOrderAmount || 0) > baseAmount) {
-    return no(`Minimum order is INR ${(coupon.minOrderAmount / 100).toLocaleString('en-IN')}`);
+    return no(`Minimum order is INR ${(coupon.minOrderAmount / 100).toLocaleString('en-IN')}`, 'minOrder');
   }
   if (coupon.maxGlobalUses && globalUses >= coupon.maxGlobalUses) {
-    return no('Coupon usage limit reached');
+    return no('Coupon usage limit reached', 'globalLimit');
   }
   if (coupon.maxUsesPerUser && perUserUses >= coupon.maxUsesPerUser) {
-    return no('Per-user usage limit reached');
+    return no('Per-user usage limit reached', 'perUserLimit');
   }
 
   const discountPct = Math.max(0, Math.min(100, Number(coupon.discountPercent || 0)));
@@ -116,18 +126,44 @@ function couponCondition(coupon) {
   return parts.join(' · ');
 }
 
+/** Copy for the rules whose message does not depend on the order. */
+const UNLOCK_MESSAGES = {
+  expired:      'This offer has expired',
+  globalLimit:  'This offer is no longer available',
+  perUserLimit: 'You have already used this offer',
+};
+
 /**
- * Every displayed coupon that would actually apply to this order.
+ * What the customer would have to change for a coupon to apply, or null when
+ * there is nothing actionable to say.
+ *
+ * Keyed off the verdict rather than re-testing the rules, so this copy can
+ * never claim a different reason than the one that actually refused the coupon.
+ */
+function couponUnlockMessage(coupon, verdict, baseAmount) {
+  if (verdict.reasonCode === 'minOrder') {
+    return `Add INR ${rupeeAmount((coupon.minOrderAmount || 0) - baseAmount)} more to unlock this offer`;
+  }
+  return UNLOCK_MESSAGES[verdict.reasonCode] || null;
+}
+
+/**
+ * Every coupon an admin advertises, whether or not it applies to this order.
+ *
+ * Ones that do not apply are still returned, flagged `eligible: false` with an
+ * `unlockMessage`, so the checkout page can show them faded rather than hide
+ * them: a coupon the customer is INR 200 short of is a reason to spend more,
+ * whereas a coupon they never see is not.
  *
  * Usage counts for the whole candidate set are resolved in two groupBy queries
  * rather than two per coupon.
  *
  * `customerEmail` is optional because the checkout page renders before the
  * customer has typed one. Without it the per-user cap cannot be evaluated, so a
- * coupon they have already exhausted is still listed; the page re-requests once
- * the email is valid and it drops out then.
+ * coupon they have already exhausted still reads as eligible; the page
+ * re-requests once the email is valid and it locks then.
  */
-async function listEligibleCoupons({ baseAmount, customerEmail } = {}) {
+async function listDisplayedCoupons({ baseAmount, customerEmail } = {}) {
   const email = String(customerEmail || '').trim().toLowerCase();
 
   const candidates = await prisma.couponCode.findMany({
@@ -164,23 +200,28 @@ async function listEligibleCoupons({ baseAmount, customerEmail } = {}) {
         perUserUses: perUserUses[coupon.code] || 0,
       }),
     }))
-    .filter(({ verdict }) => verdict.eligible)
+    // Usable offers first; `candidates` is already ordered by discount, and
+    // sort() keeps that order within each group.
+    .sort((a, b) => Number(b.verdict.eligible) - Number(a.verdict.eligible))
     // Deliberately narrow: usage caps and remaining-use counts are campaign
     // sizing and must not reach the browser.
     .map(({ coupon, verdict }) => ({
       code:            coupon.code,
-      discountPercent: verdict.discountPct,
+      discountPercent: coupon.discountPercent,
       discountAmount:  verdict.discountAmount,
       label:           couponLabel(coupon),
       condition:       couponCondition(coupon),
       expiresAt:       coupon.expiresAt,
+      eligible:        verdict.eligible,
+      unlockMessage:   verdict.eligible ? null : couponUnlockMessage(coupon, verdict, baseAmount),
     }));
 }
 
 module.exports = {
   evaluateCoupon,
   getCouponDiscount,
-  listEligibleCoupons,
+  listDisplayedCoupons,
   couponLabel,
   couponCondition,
+  couponUnlockMessage,
 };

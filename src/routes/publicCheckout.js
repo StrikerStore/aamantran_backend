@@ -5,7 +5,7 @@ const { v4: uuidv4 } = require('uuid');
 const prisma  = require('../utils/prisma');
 const { generateOrderId } = require('../utils/generateId');
 const { EXCLUDE_SANDBOX_TEMPLATE } = require('../utils/testFilters');
-const { getCouponDiscount, listEligibleCoupons } = require('../services/coupon.service');
+const { getCouponDiscount, listDisplayedCoupons } = require('../services/coupon.service');
 const { checkoutLimiter, lookupLimiter } = require('../middleware/rateLimits');
 const {
   buildPaymentParams,
@@ -110,13 +110,13 @@ async function markPaymentPaid(payment, mihpayid) {
 
 // GET /api/checkout/coupons?templateSlug=...&customerEmail=...
 //
-// The coupons a customer could actually use on this order. Only coupons an
-// admin has marked `isDisplayed` are candidates, and each still has to pass the
-// same eligibility rules that /coupon-preview applies -- so anything listed here
-// will succeed when applied.
+// Every coupon an admin has marked `isDisplayed`, judged against this order by
+// the same rules /coupon-preview applies. Each carries `eligible` and, when it
+// does not apply, an `unlockMessage` -- so anything marked eligible will succeed
+// when applied, and the rest can be shown locked instead of hidden.
 //
 // customerEmail is optional: the page renders before it is typed. Passing it
-// removes coupons that customer has already used up.
+// locks coupons that customer has already used up.
 router.get('/coupons', async (req, res) => {
   try {
     const { templateSlug, customerEmail } = req.query || {};
@@ -128,7 +128,7 @@ router.get('/coupons', async (req, res) => {
     });
     if (!template) return res.status(404).json({ message: 'Template not found' });
 
-    const coupons = await listEligibleCoupons({
+    const coupons = await listDisplayedCoupons({
       baseAmount:    template.price,
       customerEmail: customerEmail || null,
     });
