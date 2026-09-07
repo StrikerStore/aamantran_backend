@@ -11,6 +11,7 @@ const {
   buildPaymentParams,
   verifyResponseHash,
   payuPaymentUrl,
+  isPayuConfigured,
 } = require('../services/payu.service');
 const {
   sendPurchaseConfirmationEmail,
@@ -228,6 +229,24 @@ router.post('/order', async (req, res) => {
     // is collected, so a browser on the India site cannot ask for international
     // treatment.
     const storefront = resolveStorefrontForOrder(req);
+
+    // Refuse before writing anything.
+    //
+    // buildPaymentParams asserts the same thing further down, but by then the
+    // Payment row exists -- so a storefront whose merchant account is not
+    // configured used to leave a stranded `pending` order behind on every
+    // attempt, and the customer got the generic "Failed to create checkout
+    // order". Nothing should reach the database until the request is known to
+    // be fulfillable.
+    //
+    // Skipped in DUMMY_PAYMENT_MODE, which returns before PayU is ever called.
+    if (!DUMMY_PAYMENT_MODE && !isPayuConfigured(storefront)) {
+      console.error(`[checkout] PayU is not configured for storefront ${storefront}; refusing order`);
+      return res.status(503).json({
+        message: 'Payments are temporarily unavailable for your region. Please contact support.',
+      });
+    }
+
     const settings   = await getPricingSettings();
 
     const base    = computeBreakup({ template, storefront, coupon: null, settings });
