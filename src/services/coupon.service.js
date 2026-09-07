@@ -14,14 +14,31 @@
  */
 const prisma = require('../utils/prisma');
 
-/** Grouped rupee figure, no symbol. Amounts are stored in paise. */
-function rupeeAmount(paise) {
-  return Math.round(Number(paise || 0) / 100).toLocaleString('en-IN');
+/**
+ * Grouped figure, no symbol, in the minor units of `currency`.
+ *
+ * Dollars keep their cents because international prices are deliberately .99;
+ * rupees are rounded to whole units, which is how coupon copy has always read.
+ */
+function moneyAmount(minor, currency = 'INR') {
+  const value = Number(minor || 0) / 100;
+  if (String(currency).toUpperCase() === 'USD') {
+    return value.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  }
+  return Math.round(value).toLocaleString('en-IN');
 }
 
-/** Rupee string for customer-facing copy. Amounts are stored in paise. */
-function rupees(paise) {
-  return `₹${rupeeAmount(paise)}`;
+/**
+ * Money string for customer-facing coupon copy.
+ *
+ * Takes a currency because these strings reach the INTERNATIONAL checkout too:
+ * `listDisplayedCoupons` is storefront-scoped, and a coupon's `minOrderAmount`
+ * is denominated in its own storefront's currency. Hardcoding rupees here
+ * printed a dollar threshold with a ₹ in front of it.
+ */
+function money(minor, currency = 'INR') {
+  const symbol = String(currency).toUpperCase() === 'USD' ? '$' : '₹';
+  return `${symbol}${moneyAmount(minor, currency)}`;
 }
 
 /**
@@ -39,7 +56,7 @@ function rupees(paise) {
  *
  * @returns {{ eligible: boolean, discountPct: number, discountAmount: number, reason?: string, reasonCode?: string }}
  */
-function evaluateCoupon(coupon, { baseAmount, globalUses = 0, perUserUses = 0 } = {}) {
+function evaluateCoupon(coupon, { baseAmount, globalUses = 0, perUserUses = 0, currency = 'INR' } = {}) {
   const no = (reason, reasonCode) => ({
     eligible: false, discountPct: 0, discountAmount: 0, ...(reason ? { reason, reasonCode } : {}),
   });
@@ -50,7 +67,10 @@ function evaluateCoupon(coupon, { baseAmount, globalUses = 0, perUserUses = 0 } 
     return no('Coupon expired', 'expired');
   }
   if ((coupon.minOrderAmount || 0) > baseAmount) {
-    return no(`Minimum order is INR ${(coupon.minOrderAmount / 100).toLocaleString('en-IN')}`, 'minOrder');
+    // Shown when a customer TYPES a code, so it has to read in their currency —
+    // this one is reached from getCouponDiscount, not just the offers strip.
+    const code = String(currency).toUpperCase() === 'USD' ? 'USD' : 'INR';
+    return no(`Minimum order is ${code} ${moneyAmount(coupon.minOrderAmount, currency)}`, 'minOrder');
   }
   if (coupon.maxGlobalUses && globalUses >= coupon.maxGlobalUses) {
     return no('Coupon usage limit reached', 'globalLimit');
@@ -68,13 +88,25 @@ function evaluateCoupon(coupon, { baseAmount, globalUses = 0, perUserUses = 0 } 
 }
 
 /**
+ * Whether a coupon may be redeemed on a given storefront.
+ *
+ * 'BOTH' is the explicit opt-in; anything else must match exactly. Rows written
+ * before the international storefront existed default to 'IN', so an old India
+ * campaign cannot leak abroad and give away the markup it exists for.
+ */
+function couponAppliesTo(coupon, storefront) {
+  const scope = String(coupon.storefront || 'IN').toUpperCase();
+  return scope === 'BOTH' || scope === String(storefront || 'IN').toUpperCase();
+}
+
+/**
  * Resolve a single coupon code for an order.
  *
  * Behaviour and return shape are unchanged from the original in
  * routes/publicCheckout.js — including returning the normalised code even when
  * the coupon does not apply, which the checkout UI echoes back to the customer.
  */
-async function getCouponDiscount(baseAmount, couponCodeRaw, customerEmailRaw) {
+async function getCouponDiscount(baseAmount, couponCodeRaw, customerEmailRaw, storefront = 'IN') {
   const code = String(couponCodeRaw || '').trim().toUpperCase();
   if (!code) return { code: '', discountPct: 0, discountAmount: 0 };
   const customerEmail = String(customerEmailRaw || '').trim().toLowerCase();
@@ -89,9 +121,15 @@ async function getCouponDiscount(baseAmount, couponCodeRaw, customerEmailRaw) {
       maxGlobalUses: true,
       maxUsesPerUser: true,
       minOrderAmount: true,
+      storefront: true,
     },
   });
   if (!coupon || !coupon.isActive) return { code, discountPct: 0, discountAmount: 0 };
+  // A code scoped to the other storefront is refused as if it did not exist.
+  // minOrderAmount is denominated in ITS storefront currency, so honouring an
+  // India code against a dollar order would compare paise to cents and hand out
+  // a discount roughly fifty times too large.
+  if (!couponAppliesTo(coupon, storefront)) return { code, discountPct: 0, discountAmount: 0 };
 
   // Only counted when a limit actually exists — an unlimited coupon should not
   // pay for a COUNT on every checkout keystroke.
@@ -102,7 +140,8 @@ async function getCouponDiscount(baseAmount, couponCodeRaw, customerEmailRaw) {
     ? await prisma.payment.count({ where: { couponCode: code, customerEmail, status: 'paid' } })
     : 0;
 
-  const verdict = evaluateCoupon(coupon, { baseAmount, globalUses, perUserUses });
+  const currency = String(storefront || 'IN').toUpperCase() === 'INTL' ? 'USD' : 'INR';
+  const verdict = evaluateCoupon(coupon, { baseAmount, globalUses, perUserUses, currency });
   return {
     code: verdict.eligible ? coupon.code : code,
     discountPct: verdict.discountPct,
@@ -116,12 +155,18 @@ function couponLabel(coupon) {
   return `${coupon.discountPercent}% off`;
 }
 
-/** Supporting line: the conditions worth knowing before clicking Apply. */
-function couponCondition(coupon) {
+/**
+ * Supporting line: the conditions worth knowing before clicking Apply.
+ *
+ * `currency` is the storefront's, because `minOrderAmount` is denominated in it
+ * — cents for an INTL coupon, paise for an India one.
+ */
+function couponCondition(coupon, currency = 'INR') {
   const parts = [];
-  if (coupon.minOrderAmount > 0) parts.push(`on orders over ${rupees(coupon.minOrderAmount)}`);
+  if (coupon.minOrderAmount > 0) parts.push(`on orders over ${money(coupon.minOrderAmount, currency)}`);
   if (coupon.expiresAt) {
-    parts.push(`expires ${new Date(coupon.expiresAt).toLocaleDateString('en-IN', { day: 'numeric', month: 'short' })}`);
+    const locale = String(currency).toUpperCase() === 'USD' ? 'en-US' : 'en-IN';
+    parts.push(`expires ${new Date(coupon.expiresAt).toLocaleDateString(locale, { day: 'numeric', month: 'short' })}`);
   }
   return parts.join(' · ');
 }
@@ -140,9 +185,12 @@ const UNLOCK_MESSAGES = {
  * Keyed off the verdict rather than re-testing the rules, so this copy can
  * never claim a different reason than the one that actually refused the coupon.
  */
-function couponUnlockMessage(coupon, verdict, baseAmount) {
+function couponUnlockMessage(coupon, verdict, baseAmount, currency = 'INR') {
   if (verdict.reasonCode === 'minOrder') {
-    return `Add INR ${rupeeAmount((coupon.minOrderAmount || 0) - baseAmount)} more to unlock this offer`;
+    // Currency code rather than a symbol, matching how this line has always
+    // read — but the code itself has to follow the storefront.
+    const code = String(currency).toUpperCase() === 'USD' ? 'USD' : 'INR';
+    return `Add ${code} ${moneyAmount((coupon.minOrderAmount || 0) - baseAmount, currency)} more to unlock this offer`;
   }
   return UNLOCK_MESSAGES[verdict.reasonCode] || null;
 }
@@ -163,11 +211,12 @@ function couponUnlockMessage(coupon, verdict, baseAmount) {
  * coupon they have already exhausted still reads as eligible; the page
  * re-requests once the email is valid and it locks then.
  */
-async function listDisplayedCoupons({ baseAmount, customerEmail } = {}) {
+async function listDisplayedCoupons({ baseAmount, customerEmail, storefront = 'IN', currency = 'INR' } = {}) {
   const email = String(customerEmail || '').trim().toLowerCase();
+  const scope = String(storefront || 'IN').toUpperCase();
 
   const candidates = await prisma.couponCode.findMany({
-    where:   { isDisplayed: true, isActive: true },
+    where:   { isDisplayed: true, isActive: true, storefront: { in: [scope, 'BOTH'] } },
     orderBy: { discountPercent: 'desc' },
   });
   if (!candidates.length) return [];
@@ -198,6 +247,7 @@ async function listDisplayedCoupons({ baseAmount, customerEmail } = {}) {
         baseAmount,
         globalUses:  globalUses[coupon.code] || 0,
         perUserUses: perUserUses[coupon.code] || 0,
+        currency,
       }),
     }))
     // Usable offers first; `candidates` is already ordered by discount, and
@@ -209,16 +259,18 @@ async function listDisplayedCoupons({ baseAmount, customerEmail } = {}) {
       code:            coupon.code,
       discountPercent: coupon.discountPercent,
       discountAmount:  verdict.discountAmount,
+      currency,
       label:           couponLabel(coupon),
-      condition:       couponCondition(coupon),
+      condition:       couponCondition(coupon, currency),
       expiresAt:       coupon.expiresAt,
       eligible:        verdict.eligible,
-      unlockMessage:   verdict.eligible ? null : couponUnlockMessage(coupon, verdict, baseAmount),
+      unlockMessage:   verdict.eligible ? null : couponUnlockMessage(coupon, verdict, baseAmount, currency),
     }));
 }
 
 module.exports = {
   evaluateCoupon,
+  couponAppliesTo,
   getCouponDiscount,
   listDisplayedCoupons,
   couponLabel,

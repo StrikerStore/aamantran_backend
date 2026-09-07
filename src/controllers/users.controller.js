@@ -6,6 +6,7 @@ const { createPaymentLinkOrPlaceholder } = require('../services/payu.service');
 const { sendBalancePaymentEmail, sendInvitationPublishedEmail, sendTemplateChangedEmail } = require('../services/email.service');
 const { addEventMedia, removeEventMedia } = require('../services/eventMedia.service');
 const { normalizeOptionalHttpUrl, normalizeOptionalHashtag } = require('../utils/urlNormalize');
+const { normalizePhone, normalizePhoneForGateway } = require('../utils/phone');
 const siteUrls = require('../config/siteUrls');
 const { mintInvitePreviewToken } = require('../services/previewToken');
 
@@ -115,7 +116,7 @@ async function list(req, res) {
       take:    Number(limit),
       orderBy: { createdAt: 'desc' },
       select: {
-        id: true, email: true, username: true, phone: true, createdAt: true,
+        id: true, email: true, username: true, phone: true, phoneCountryCode: true, createdAt: true,
         isTestAccount: true,
         _count: { select: { events: true, payments: true } },
       },
@@ -131,7 +132,7 @@ async function get(req, res) {
   const user = await prisma.user.findUniqueOrThrow({
     where: { id: req.params.id },
     select: {
-      id: true, email: true, username: true, phone: true, createdAt: true,
+      id: true, email: true, username: true, phone: true, phoneCountryCode: true, createdAt: true,
       events: {
         include: {
           template:     { select: { id: true, name: true, slug: true, price: true, fieldSchema: true } },
@@ -636,6 +637,38 @@ async function updateEventData(req, res) {
 // POST /api/v1/users/:id/swap-template
 // Body: { eventId, newTemplateId }
 // If new template is more expensive → create PayU payment link, send email
+/**
+ * Refuse a PAID upgrade for a customer who bought on the international storefront.
+ *
+ * `balance` is the difference between two INR template prices, but an
+ * international customer paid a DERIVED dollar price carrying the markup
+ * multiplier — so the rupee difference is not what they owe, and the payment
+ * link would bill them in a currency they never transacted in. The swap flow is
+ * INR-only by design (payu.service.js defaults to the India account), so rather
+ * than quietly charging the wrong amount, admin is told to arrange it manually.
+ *
+ * Downgrades and same-price swaps are unaffected — nothing is charged, so
+ * nothing can be charged wrongly.
+ *
+ * @returns {Promise<object|null>} an error body to return, or null to proceed.
+ */
+async function blockPaidUpgradeForIntlBuyer(userId, balance) {
+  if (balance <= 0) return null;
+  const intlOrder = await prisma.payment.findFirst({
+    where:  { userId, status: 'paid', storefront: 'INTL' },
+    select: { currency: true },
+  });
+  if (!intlOrder) return null;
+  return {
+    ok: false,
+    message:
+      'This customer bought on the international storefront and paid in ' +
+      (intlOrder.currency || 'USD') +
+      '. Paid upgrades are INR-only, so the balance cannot be charged ' +
+      'automatically — please arrange this one manually.',
+  };
+}
+
 // If same or cheaper → swap immediately
 async function swapTemplate(req, res) {
   const { eventId, newTemplateId } = req.body;
@@ -657,6 +690,9 @@ async function swapTemplate(req, res) {
   const oldPrice = event.template.price;
   const newPrice = newTemplate.price;
   const balance  = newPrice - oldPrice;
+
+  const intlBlock = await blockPaidUpgradeForIntlBuyer(req.params.id, balance);
+  if (intlBlock) return res.status(409).json(intlBlock);
 
   // Same or cheaper — swap immediately
   if (balance <= 0) {
@@ -682,11 +718,13 @@ async function swapTemplate(req, res) {
 
   const link = await createPaymentLinkOrPlaceholder({
     txnid,
-    amountPaise:   balance,
+    amountMinor:   balance,
     description:   `Balance payment to upgrade invitation template to "${newTemplate.name}"`,
     customerName:  user.username || user.email,
     customerEmail: user.email,
-    customerPhone: user.phone || undefined,
+    // Full E.164 digits, matching publicCheckout.js -- passing the bare national
+    // part would send the gateway a number missing its country code.
+    customerPhone: normalizePhoneForGateway(user.phoneCountryCode, user.phone) || undefined,
     notes: {
       userId:         user.id,
       eventId,
@@ -765,6 +803,9 @@ async function swapPairedTemplate(req, res) {
   const newPrice = newTemplate.price;
   const balance  = newPrice - oldPrice;
 
+  const intlBlockPaired = await blockPaidUpgradeForIntlBuyer(req.params.id, balance);
+  if (intlBlockPaired) return res.status(409).json(intlBlockPaired);
+
   if (balance <= 0) {
     const pinData = {
       templateId:        newTemplateId,
@@ -799,11 +840,13 @@ async function swapPairedTemplate(req, res) {
 
   const link = await createPaymentLinkOrPlaceholder({
     txnid,
-    amountPaise:   balance,
+    amountMinor:   balance,
     description:   `Balance payment to upgrade both paired invitations to "${newTemplate.name}"`,
     customerName:  user.username || user.email,
     customerEmail: user.email,
-    customerPhone: user.phone || undefined,
+    // Full E.164 digits, matching publicCheckout.js -- passing the bare national
+    // part would send the gateway a number missing its country code.
+    customerPhone: normalizePhoneForGateway(user.phoneCountryCode, user.phone) || undefined,
     notes: {
       userId:         user.id,
       eventId:        full.id,
@@ -891,14 +934,30 @@ async function getEventPreviewToken(req, res) {
 
 // PATCH /api/v1/users/:id/profile — admin updates phone (username is immutable here)
 async function updateProfile(req, res) {
-  const { phone } = req.body;
+  const { phone, phoneCountryCode } = req.body;
   if (phone === undefined) {
     return res.status(400).json({ ok: false, message: 'No fields to update' });
   }
+  // An explicit null/empty clears the number. Admin has always been able to do
+  // this, and it is the only escape hatch from the couple's write-once lock, so
+  // validation must not take it away.
+  const clearing = phone === null || String(phone).trim() === '';
+
+  // Otherwise normalised the same way the couple's own dashboard does it.
+  // Writing the raw string here would leave admin-entered numbers in a different
+  // shape from every other one -- and since the field is write-once for the
+  // couple, an admin fix is often the only correction anyone gets.
+  const parsed = clearing ? null : normalizePhone(phoneCountryCode, phone);
+  if (parsed && !parsed.valid) {
+    return res.status(400).json({ ok: false, message: parsed.reason });
+  }
+
   const user = await prisma.user.update({
     where: { id: req.params.id },
-    data: { phone },
-    select: { id: true, email: true, username: true, phone: true, createdAt: true },
+    data: clearing
+      ? { phone: null, phoneCountryCode: null }
+      : { phone: parsed.national, phoneCountryCode: parsed.countryCode },
+    select: { id: true, email: true, username: true, phone: true, phoneCountryCode: true, createdAt: true },
   });
   res.json({ ok: true, data: user });
 }

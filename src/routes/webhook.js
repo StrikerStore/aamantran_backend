@@ -18,12 +18,29 @@ const router = express.Router();
 router.post('/payu', async (req, res) => {
   // PayU IPN sends form-encoded data
   const params = req.body || {};
+  const { txnid, mihpayid, status } = params;
 
-  if (!verifyResponseHash(params)) {
-    return res.status(400).json({ ok: false, message: 'Invalid hash' });
+  // Which merchant account signed this notification. The storefront also rides
+  // along in udf1, but udf1 is only trustworthy AFTER the signature verifies --
+  // and verifying is exactly what needs the salt. So the stored row decides,
+  // since it is the one source not supplied by the caller. A txnid we have never
+  // seen falls through to the India account, which then fails the hash check.
+  let storefront = 'IN';
+  if (txnid) {
+    try {
+      const known = await prisma.payment.findFirst({
+        where:  { payuTxnId: String(txnid) },
+        select: { storefront: true },
+      });
+      if (known && known.storefront) storefront = known.storefront;
+    } catch {
+      // Fall through on 'IN'; an unverifiable hash is refused below either way.
+    }
   }
 
-  const { txnid, mihpayid, status } = params;
+  if (!verifyResponseHash(params, storefront)) {
+    return res.status(400).json({ ok: false, message: 'Invalid hash' });
+  }
 
   if (status !== 'success') {
     // Non-success IPN — mark payment as failed if still pending

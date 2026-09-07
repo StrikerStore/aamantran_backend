@@ -46,7 +46,7 @@ router.post('/login', authLoginLimiter, async (req, res) => {
 
   const user = await prisma.user.findFirst({
     where: { username: String(username).trim().toLowerCase() },
-    select: { id: true, username: true, email: true, phone: true, passwordHash: true },
+    select: { id: true, username: true, email: true, phone: true, phoneCountryCode: true, passwordHash: true },
   });
 
   // Run bcrypt even when the user doesn't exist so timing doesn't reveal
@@ -77,7 +77,7 @@ router.post('/login', authLoginLimiter, async (req, res) => {
     ok: true,
     token,
     expiresIn,
-    user: { id: user.id, username: user.username, email: user.email, phone: user.phone },
+    user: { id: user.id, username: user.username, email: user.email, phone: user.phone, phoneCountryCode: user.phoneCountryCode },
   });
 });
 
@@ -236,6 +236,7 @@ router.get('/me', verifyUserJWT, async (req, res) => {
       username: true,
       email: true,
       phone: true,
+      phoneCountryCode: true,
       createdAt: true,
       events: {
         select: {

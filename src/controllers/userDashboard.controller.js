@@ -1,4 +1,5 @@
 const prisma  = require('../utils/prisma');
+const { normalizePhone } = require('../utils/phone');
 const path    = require('path');
 const { v4: uuidv4 } = require('uuid');
 const {
@@ -1112,10 +1113,10 @@ async function getTicket(req, res) {
 // ─── PROFILE ─────────────────────────────────────────────────────────────────
 
 async function updateProfile(req, res) {
-  const { email, phone } = req.body || {};
+  const { email, phone, phoneCountryCode } = req.body || {};
   const existing = await prisma.user.findUnique({
     where: { id: req.user.id },
-    select: { id: true, username: true, email: true, phone: true },
+    select: { id: true, username: true, email: true, phone: true, phoneCountryCode: true },
   });
   if (!existing) return res.status(404).json({ ok: false, message: 'User not found' });
 
@@ -1129,11 +1130,15 @@ async function updateProfile(req, res) {
     if (currentPhone) {
       return res.status(403).json({ ok: false, message: 'Contact number cannot be changed once filled. Please raise a support ticket if needed.' });
     }
-    const nextPhone = String(phone || '').trim();
-    if (!nextPhone) {
-      return res.status(400).json({ ok: false, message: 'Contact number is required' });
+    // Write-once, so this is the only chance to get the format right -- validate
+    // rather than store whatever arrived. The dial code is kept in its own
+    // column so the picker can re-render it without re-parsing.
+    const parsed = normalizePhone(phoneCountryCode, phone);
+    if (!parsed.valid) {
+      return res.status(400).json({ ok: false, message: parsed.reason });
     }
-    data.phone = nextPhone;
+    data.phone = parsed.national;
+    data.phoneCountryCode = parsed.countryCode;
   }
 
   if (Object.keys(data).length === 0) {
@@ -1143,7 +1148,7 @@ async function updateProfile(req, res) {
   const user = await prisma.user.update({
     where: { id: req.user.id },
     data,
-    select: { id: true, username: true, email: true, phone: true },
+    select: { id: true, username: true, email: true, phone: true, phoneCountryCode: true },
   });
   return res.json({ ok: true, user });
 }

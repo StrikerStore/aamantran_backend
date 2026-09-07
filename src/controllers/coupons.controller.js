@@ -24,8 +24,22 @@ async function list(req, res) {
   res.json({ ok: true, data: coupons, ...(paginated ? { total, page, limit } : {}) });
 }
 
+/**
+ * Which storefront a code may be redeemed on.
+ *
+ * Defaults to India, which is what every code written before the global site
+ * existed meant. That default matters: minOrderAmount is denominated in the
+ * minor units of its own storefront currency, so an India code loose on the
+ * dollar site would compare paise against cents.
+ */
+function parseCouponStorefront(raw) {
+  const v = String(raw == null ? 'IN' : raw).trim().toUpperCase();
+  if (v === 'IN' || v === 'INTL' || v === 'BOTH') return { value: v };
+  return { error: 'Storefront must be IN, INTL or BOTH' };
+}
+
 async function create(req, res) {
-  const { code, discountPercent, expiresAt, maxGlobalUses, maxUsesPerUser, minOrderAmount, isActive = true, isDisplayed = false } = req.body || {};
+  const { code, discountPercent, expiresAt, maxGlobalUses, maxUsesPerUser, minOrderAmount, isActive = true, isDisplayed = false, storefront = 'IN' } = req.body || {};
   const normalized = String(code || '').trim().toUpperCase();
   const pct = Number(discountPercent);
 
@@ -52,6 +66,8 @@ async function create(req, res) {
   if (!Number.isFinite(minAmountRupees) || minAmountRupees < 0) {
     return res.status(400).json({ ok: false, message: 'Minimum order amount cannot be negative' });
   }
+  const scope = parseCouponStorefront(storefront);
+  if (scope.error) return res.status(400).json({ ok: false, message: scope.error });
 
   const coupon = await prisma.couponCode.create({
     data: {
@@ -65,6 +81,7 @@ async function create(req, res) {
       // Advertising a coupon that does not work would be worse than not
       // advertising it, so display always implies active.
       isDisplayed: Boolean(isDisplayed) && Boolean(isActive),
+      storefront: scope.value,
     },
   });
 
@@ -72,8 +89,13 @@ async function create(req, res) {
 }
 
 async function update(req, res) {
-  const { discountPercent, expiresAt, maxGlobalUses, maxUsesPerUser, minOrderAmount, isActive, isDisplayed } = req.body || {};
+  const { discountPercent, expiresAt, maxGlobalUses, maxUsesPerUser, minOrderAmount, isActive, isDisplayed, storefront } = req.body || {};
   const data = {};
+  if (storefront !== undefined) {
+    const scope = parseCouponStorefront(storefront);
+    if (scope.error) return res.status(400).json({ ok: false, message: scope.error });
+    data.storefront = scope.value;
+  }
   if (discountPercent !== undefined) {
     const pct = Number(discountPercent);
     if (!Number.isFinite(pct) || pct <= 0 || pct > 100) {

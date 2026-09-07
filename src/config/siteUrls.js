@@ -8,6 +8,7 @@ const DEFAULTS = {
   dev: {
     API_BASE_URL: 'http://localhost:4000',
     LANDING_URL: 'http://localhost:3000',
+    LANDING_URL_INTL: 'http://localhost:3002',
     COUPLE_DASHBOARD_URL: 'http://localhost:3001',
     ADMIN_URL: 'http://localhost:5174',
     LAB_URL: 'http://localhost:5175',
@@ -15,6 +16,7 @@ const DEFAULTS = {
   prod: {
     API_BASE_URL: 'https://api.aamantran.online',
     LANDING_URL: 'https://www.aamantran.online',
+    LANDING_URL_INTL: 'https://www.aamantranglobal.com',
     COUPLE_DASHBOARD_URL: 'https://app.aamantran.online',
     ADMIN_URL: 'https://admin.aamantran.online',
     LAB_URL: 'https://lab.aamantran.online',
@@ -33,6 +35,12 @@ function pick(key) {
 module.exports = {
   apiBaseUrl: () => pick('API_BASE_URL'),
   landingUrl: () => pick('LANDING_URL'),
+  /**
+   * International storefront (aamantranglobal.com) -- a second deployment of
+   * the same website, priced in USD. Its own origin because a buyer who paid
+   * there must be redirected back there, not to the India site.
+   */
+  landingUrlIntl: () => pick('LANDING_URL_INTL'),
   coupleDashboardUrl: () => pick('COUPLE_DASHBOARD_URL'),
   adminUrl: () => pick('ADMIN_URL'),
   /** Template Lab — the external template developers' sandbox app. */

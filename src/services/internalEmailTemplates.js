@@ -30,8 +30,19 @@ function escMultiline(value) {
   return esc(value).replace(/\r?\n/g, '<br>');
 }
 
-function rupees(paise) {
-  return `₹${(Number(paise || 0) / 100).toLocaleString('en-IN')}`;
+/**
+ * Money in the currency of the order, not always rupees.
+ *
+ * `minor` is paise for INR and cents for USD. Kept as one helper so the
+ * amount, the discount and the derived list price can never disagree about
+ * which currency they are in.
+ */
+function money(minor, currency) {
+  const value = Number(minor || 0) / 100;
+  if (String(currency || 'INR').toUpperCase() === 'USD') {
+    return `$${value.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+  }
+  return `₹${value.toLocaleString('en-IN')}`;
 }
 
 function internalLayout(title, rowsHtml, extraHtml = '') {
@@ -81,18 +92,21 @@ function mailtoLink(email) {
 
 /** Team alert: a template was purchased. */
 function adminOrderPlacedHtml({
-  orderId, templateName, amount, discountAmount, couponCode,
+  orderId, templateName, amount, currency, storefront, discountAmount, couponCode,
   customerEmail, paymentId, mihpayid, purchasedAt, adminUrl,
 }) {
   const discount = Number(discountAmount || 0);
+  const cur = currency || 'INR';
   const rows = [
     internalRow('Order ID', `<span style="font-family:monospace;letter-spacing:1px;">${esc(orderId || '—')}</span>`),
     internalRow('Template', esc(templateName)),
-    internalRow('Amount paid', `<span style="color:#1a7f4b;">${rupees(amount)}</span>`),
+    // Which of the two sites, and therefore which PayU account settles it.
+    internalRow('Storefront', storefront === 'INTL' ? 'International (USD)' : 'India (INR)'),
+    internalRow('Amount paid', `<span style="color:#1a7f4b;">${money(amount, cur)}</span>`),
     discount > 0
       ? internalRow(
           'Discount',
-          `${rupees(discount)}${couponCode ? ` (${esc(couponCode)})` : ''} &nbsp;<span style="color:#6b7280;font-weight:400;">list ${rupees(Number(amount || 0) + discount)}</span>`
+          `${money(discount, cur)}${couponCode ? ` (${esc(couponCode)})` : ''} &nbsp;<span style="color:#6b7280;font-weight:400;">list ${money(Number(amount || 0) + discount, cur)}</span>`
         )
       : '',
     internalRow('Customer', customerEmail ? mailtoLink(customerEmail) : '—'),

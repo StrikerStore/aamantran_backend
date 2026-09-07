@@ -121,6 +121,12 @@ const allowedOrigins = Array.from(
   new Set(
     [
       toOrigin(siteUrls.landingUrl()),
+      // Second storefront: its own origin, because CORS matches exactly and a
+      // browser on aamantranglobal.com is not the same origin as the India site.
+      // NOTE: this list is built once at module load, so a new landing origin
+      // needs a redeploy -- the API must ship with LANDING_URL_INTL set BEFORE
+      // that site takes traffic, or its checkout calls are rejected.
+      toOrigin(siteUrls.landingUrlIntl()),
       toOrigin(siteUrls.adminUrl()),
       toOrigin(siteUrls.coupleDashboardUrl()),
       toOrigin(siteUrls.labUrl()),

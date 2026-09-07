@@ -32,7 +32,7 @@ async function get(req, res) {
   const payment = await prisma.payment.findUniqueOrThrow({
     where: { id: req.params.id },
     include: {
-      user:     { select: { id: true, username: true, email: true, phone: true } },
+      user:     { select: { id: true, username: true, email: true, phone: true, phoneCountryCode: true } },
       template: { select: { id: true, name: true, slug: true, price: true } },
       event:    { select: { id: true, slug: true, brideName: true, groomName: true, isPublished: true } },
     },
@@ -52,7 +52,9 @@ async function refund(req, res) {
     return res.status(400).json({ ok: false, message: 'No PayU payment ID — cannot refund' });
   }
 
-  const refundResult = await refundPayment(payment.payuMihpayid, payment.amount);
+  // Refund through the merchant account that actually settled this order --
+  // the other account has no record of the transaction.
+  const refundResult = await refundPayment(payment.payuMihpayid, payment.amount, payment.storefront);
 
   await prisma.payment.update({
     where: { id: payment.id },

@@ -3,6 +3,7 @@ const express = require('express');
 const prisma  = require('../utils/prisma');
 const { publicInviteLimiter } = require('../middleware/rateLimits');
 const { EXCLUDE_TEST_OWNER, EXCLUDE_SANDBOX_TEMPLATE } = require('../utils/testFilters');
+const { getPricingSettings, withUsdPrices } = require('../services/pricing.service');
 
 const router = express.Router();
 router.use(publicInviteLimiter);
@@ -39,14 +40,20 @@ router.get('/', async (req, res) => {
         thumbnailUrl: true, desktopThumbnailUrl: true, mobileThumbnailUrl: true, community: true,
         desktopEntryFile: true, mobileEntryFile: true,
         bestFor: true, languages: true,
-        price: true, originalPrice: true, gstPercent: true,
+        price: true, originalPrice: true, gstPercent: true, markupMultiplier: true,
         buyerCount: true, avgRating: true, releasedAt: true,
       },
     }),
     prisma.template.count({ where }),
   ]);
 
-  res.json({ templates, total, page: Number(page), limit: Number(limit) });
+  // Both currencies go out on every row, and the deployment picks. One cached
+  // response is then correct for either storefront, which is what keeps the
+  // catalogue statically cacheable now that there are two of them.
+  const settings = await getPricingSettings();
+  const priced = templates.map((t) => withUsdPrices(t, settings));
+
+  res.json({ templates: priced, total, page: Number(page), limit: Number(limit) });
 });
 
 // GET /api/reviews/featured — must be before /:slug to avoid slug capture
@@ -93,15 +100,16 @@ router.get('/:slug', async (req, res) => {
       thumbnailUrl: true, desktopThumbnailUrl: true, mobileThumbnailUrl: true, community: true,
       desktopEntryFile: true, mobileEntryFile: true,
       bestFor: true, languages: true, style: true, colourPalette: true, animations: true,
-      price: true, originalPrice: true, gstPercent: true, aboutText: true,
+      price: true, originalPrice: true, gstPercent: true, markupMultiplier: true, aboutText: true,
       buyerCount: true, avgRating: true, releasedAt: true,
     },
   });
 
   if (!template) return res.status(404).json({ message: 'Template not found' });
 
+  const settings = await getPricingSettings();
   const reviewCount = await prisma.templateReview.count({ where: { templateId: template.id, isHidden: false, ...EXCLUDE_TEST_OWNER } });
-  res.json({ ...template, reviewCount });
+  res.json({ ...withUsdPrices(template, settings), reviewCount });
 });
 
 // GET /api/templates/:slug/reviews

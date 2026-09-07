@@ -20,6 +20,15 @@ const {
 const siteUrls = require('../config/siteUrls');
 const { validateNewPassword } = require('../utils/authSecurity');
 const { POLICY_VERSION } = require('../lib/constants');
+const {
+  storefrontFromRequest,
+  resolveStorefrontForOrder,
+  currencyFor,
+  landingUrlFor,
+} = require('../utils/storefront');
+const { countryFromRequest } = require('../utils/geo');
+const { getPricingSettings, computeBreakup } = require('../services/pricing.service');
+const { normalizePhone, normalizePhoneForGateway } = require('../utils/phone');
 
 const router = express.Router();
 router.use(checkoutLimiter);
@@ -79,11 +88,16 @@ async function markPaymentPaid(payment, mihpayid) {
   ]);
 
   if (updated.customerEmail) {
-    const onboardingUrl = `${siteUrls.landingUrl()}/onboarding?paymentId=${encodeURIComponent(updated.id)}&slug=${encodeURIComponent(updated.template.slug)}&template=${encodeURIComponent(updated.template.name)}${updated.orderId ? `&orderId=${encodeURIComponent(updated.orderId)}` : ''}&amount=${updated.amount}`;
+    // Back to the site they actually bought from. This used to be hardcoded to
+    // the India landing URL, so an international buyer was emailed a link to the
+    // wrong storefront.
+    const landing = landingUrlFor(updated.storefront);
+    const onboardingUrl = `${landing}/onboarding?paymentId=${encodeURIComponent(updated.id)}&slug=${encodeURIComponent(updated.template.slug)}&template=${encodeURIComponent(updated.template.name)}${updated.orderId ? `&orderId=${encodeURIComponent(updated.orderId)}` : ''}&amount=${updated.amount}&currency=${encodeURIComponent(updated.currency || 'INR')}`;
     sendPurchaseConfirmationEmail({
       to: updated.customerEmail,
       templateName: updated.template.name,
       amount: updated.amount,
+      currency: updated.currency,
       orderId: updated.orderId || null,
       onboardingUrl,
     }).catch(err => console.error('[Email Error]', err.message));
@@ -96,6 +110,8 @@ async function markPaymentPaid(payment, mihpayid) {
     orderId:        updated.orderId,
     templateName:   updated.template.name,
     amount:         updated.amount,
+    currency:       updated.currency,
+    storefront:     updated.storefront,
     discountAmount: updated.discountAmount,
     couponCode:     updated.couponCode,
     customerEmail:  updated.customerEmail,
@@ -124,13 +140,21 @@ router.get('/coupons', async (req, res) => {
 
     const template = await prisma.template.findUnique({
       where:  { slug: String(templateSlug), isActive: true, ...EXCLUDE_SANDBOX_TEMPLATE },
-      select: { price: true },
+      select: { id: true, slug: true, price: true, gstPercent: true, markupMultiplier: true },
     });
     if (!template) return res.status(404).json({ message: 'Template not found' });
 
+    const storefront = storefrontFromRequest(req);
+    const settings   = await getPricingSettings();
+    // Offers are sized against the price this visitor actually sees, so a
+    // percentage-off figure on the dollar site is a dollar figure.
+    const breakup = computeBreakup({ template, storefront, coupon: null, settings });
+
     const coupons = await listDisplayedCoupons({
-      baseAmount:    template.price,
+      baseAmount:    breakup.baseAmount,
       customerEmail: customerEmail || null,
+      storefront,
+      currency:      breakup.currency,
     });
 
     // An empty list is an ordinary outcome, not an error -- most orders will
@@ -150,27 +174,32 @@ router.post('/coupon-preview', async (req, res) => {
 
     const template = await prisma.template.findUnique({
       where: { slug: templateSlug, isActive: true, ...EXCLUDE_SANDBOX_TEMPLATE },
-      select: { price: true, gstPercent: true },
+      select: { id: true, slug: true, price: true, gstPercent: true, markupMultiplier: true },
     });
     if (!template) return res.status(404).json({ message: 'Template not found' });
 
-    const coupon = await getCouponDiscount(template.price, couponCode, customerEmail);
-    const taxableAmount = Math.max(100, template.price - coupon.discountAmount);
-    const gstPercent = Number(template.gstPercent || 0);
-    const gstAmount = Math.round((taxableAmount * gstPercent) / 100);
-    const finalAmount = taxableAmount + gstAmount;
+    const storefront = storefrontFromRequest(req);
+    const settings   = await getPricingSettings();
+
+    // The coupon is evaluated against the price for THIS storefront, so a
+    // percentage comes off dollars on the global site and rupees on the India
+    // one. Passing the storefront also refuses codes scoped to the other site.
+    const base   = computeBreakup({ template, storefront, coupon: null, settings });
+    const coupon = await getCouponDiscount(base.baseAmount, couponCode, customerEmail, storefront);
+    const breakup = computeBreakup({ template, storefront, coupon, settings });
 
     return res.json({
       valid: coupon.discountPct > 0,
       code: coupon.code,
       reason: coupon.reason || null,
       priceBreakup: {
-        baseAmount: template.price,
-        discountAmount: coupon.discountAmount,
-        discountPct: coupon.discountPct,
-        gstPercent,
-        gstAmount,
-        finalAmount,
+        baseAmount:     breakup.baseAmount,
+        discountAmount: breakup.discountAmount,
+        discountPct:    breakup.discountPct,
+        gstPercent:     breakup.gstPercent,
+        gstAmount:      breakup.gstAmount,
+        finalAmount:    breakup.finalAmount,
+        currency:       breakup.currency,
       },
     });
   } catch {
@@ -181,7 +210,7 @@ router.post('/coupon-preview', async (req, res) => {
 // POST /api/checkout/order — creates pending payment, returns PayU form params
 router.post('/order', async (req, res) => {
   try {
-    const { templateSlug, couponCode, customerEmail, customerContact, consent, marketingOptIn } = req.body || {};
+    const { templateSlug, couponCode, customerEmail, customerContact, customerContactCountryCode, consent, marketingOptIn } = req.body || {};
     if (!templateSlug) return res.status(400).json({ message: 'templateSlug is required' });
     // DPDP: specific, informed consent must be recorded before personal data is processed
     if (consent !== true) {
@@ -190,17 +219,22 @@ router.post('/order', async (req, res) => {
 
     const template = await prisma.template.findUnique({
       where: { slug: templateSlug, isActive: true, ...EXCLUDE_SANDBOX_TEMPLATE },
-      select: { id: true, slug: true, name: true, price: true, gstPercent: true },
+      select: { id: true, slug: true, name: true, price: true, gstPercent: true, markupMultiplier: true },
     });
     if (!template) return res.status(404).json({ message: 'Template not found' });
 
-    const coupon = await getCouponDiscount(template.price, couponCode, customerEmail);
-    const discountPct    = coupon.discountPct;
-    const discountAmount = coupon.discountAmount;
-    const taxableAmount  = Math.max(100, template.price - discountAmount);
-    const gstPercent     = Number(template.gstPercent || 0);
-    const gstAmount      = Math.round((taxableAmount * gstPercent) / 100);
-    const finalAmount    = taxableAmount + gstAmount;
+    // Checked against Origin, not merely taken from the body: this is the one
+    // request where the answer decides what someone is charged and whether GST
+    // is collected, so a browser on the India site cannot ask for international
+    // treatment.
+    const storefront = resolveStorefrontForOrder(req);
+    const settings   = await getPricingSettings();
+
+    const base    = computeBreakup({ template, storefront, coupon: null, settings });
+    const coupon  = await getCouponDiscount(base.baseAmount, couponCode, customerEmail, storefront);
+    const breakup = computeBreakup({ template, storefront, coupon, settings });
+
+    const { discountPct, discountAmount, gstPercent, gstAmount, finalAmount } = breakup;
 
     const txnid   = uuidv4().replace(/-/g, '').slice(0, 25);
     const orderId = generateOrderId();
@@ -213,8 +247,18 @@ router.post('/order', async (req, res) => {
         customerEmail: customerEmail ? String(customerEmail).trim().toLowerCase() : null,
         couponCode:    coupon.discountPct > 0 ? coupon.code : null,
         discountAmount,
+        // Minor units of `currency`: paise for INR, cents for USD.
         amount:        finalAmount,
-        currency:      'INR',
+        currency:      breakup.currency,
+        storefront,
+        // Evidence of where the sale happened, which is what zero-rating GST on
+        // an export rests on. Trustworthy here because the checkout page calls
+        // this endpoint from the buyer's own browser.
+        countryCode:   countryFromRequest(req),
+        // Frozen so this order stays explainable after the global rate moves.
+        fxRate:           breakup.fxRate,
+        markupMultiplier: breakup.markupMultiplier,
+        gstAmount,
         status:        'pending',
         consentAt:     new Date(),
         policyVersion: POLICY_VERSION,
@@ -229,7 +273,7 @@ router.post('/order', async (req, res) => {
         orderId:   payment.orderId,
         amount:    finalAmount,
         dummy:     true,
-        priceBreakup: { baseAmount: template.price, discountAmount, gstPercent, gstAmount, finalAmount, discountPct },
+        priceBreakup: { baseAmount: breakup.baseAmount, discountAmount, gstPercent, gstAmount, finalAmount, discountPct, currency: breakup.currency },
       });
     }
 
@@ -237,13 +281,17 @@ router.post('/order', async (req, res) => {
     const firstname = String(customerEmail || '').split('@')[0].replace(/[^a-zA-Z0-9 _-]/g, '').slice(0, 30) || 'Customer';
     const payuParams = buildPaymentParams({
       txnid,
-      amountPaise:  finalAmount,
+      amountMinor:  finalAmount,
       productinfo:  `Aamantran - ${template.name}`,
       firstname,
       email:        customerEmail ? String(customerEmail).trim().toLowerCase() : '',
-      phone:        customerContact ? String(customerContact).replace(/\D/g, '').slice(0, 10) : '',
+      // Digits only, but NOT truncated: the old .slice(0, 10) assumed an Indian
+      // number and silently mangled every international one (+1 415 555 0123
+      // reached PayU as 1415555012).
+      phone:        normalizePhoneForGateway(customerContactCountryCode, customerContact),
       successUrl:   `${apiBase}/api/checkout/payu-success`,
       failureUrl:   `${apiBase}/api/checkout/payu-failure`,
+      storefront,
     });
 
     return res.json({
@@ -252,7 +300,7 @@ router.post('/order', async (req, res) => {
       paymentId:  payment.id,
       orderId:    payment.orderId,
       amount:     finalAmount,
-      priceBreakup: { baseAmount: template.price, discountAmount, gstPercent, gstAmount, finalAmount, discountPct },
+      priceBreakup: { baseAmount: breakup.baseAmount, discountAmount, gstPercent, gstAmount, finalAmount, discountPct, currency: breakup.currency },
     });
   } catch {
     return res.status(500).json({ message: 'Failed to create checkout order' });
@@ -263,35 +311,52 @@ router.post('/order', async (req, res) => {
 router.post('/payu-success', async (req, res) => {
   const params = req.body || {};
 
-  try {
-    if (!verifyResponseHash(params)) {
-      return res.redirect(`${siteUrls.landingUrl()}/?payment=failed&reason=invalid_signature`);
-    }
+  const { txnid, mihpayid, status } = params;
 
-    const { txnid, mihpayid, status } = params;
+  // The order is loaded BEFORE the signature is checked, because with two
+  // merchant accounts the signature cannot be checked without first knowing
+  // which salt signed it. udf1 also carries the storefront, but udf1 is only
+  // trustworthy once the hash verifies -- so the stored row, the one input PayU
+  // did not supply, is what decides. Every redirect from here on goes to that
+  // storefront's own site: a buyer who paid on the global site must not land on
+  // the India one.
+  let payment = null;
+  try {
+    if (txnid) {
+      payment = await prisma.payment.findFirst({
+        where: { payuTxnId: String(txnid) },
+        include: { template: { select: { name: true, slug: true } } },
+      });
+    }
+  } catch (err) {
+    console.error('[PayU] payu-success lookup failed:', err.message);
+  }
+
+  const storefront = (payment && payment.storefront) || 'IN';
+  const landing    = landingUrlFor(storefront);
+
+  try {
+    if (!verifyResponseHash(params, storefront)) {
+      return res.redirect(`${landing}/?payment=failed&reason=invalid_signature`);
+    }
 
     if (status !== 'success') {
-      return res.redirect(`${siteUrls.landingUrl()}/?payment=failed&reason=${encodeURIComponent(status || 'unknown')}`);
+      return res.redirect(`${landing}/?payment=failed&reason=${encodeURIComponent(status || 'unknown')}`);
     }
 
-    const payment = await prisma.payment.findFirst({
-      where: { payuTxnId: txnid },
-      include: { template: { select: { name: true, slug: true } } },
-    });
-
     if (!payment) {
-      return res.redirect(`${siteUrls.landingUrl()}/?payment=failed&reason=not_found`);
+      return res.redirect(`${landing}/?payment=failed&reason=not_found`);
     }
 
     if (payment.status !== 'paid') {
       await markPaymentPaid(payment, mihpayid);
     }
 
-    const onboardingUrl = `${siteUrls.landingUrl()}/onboarding?paymentId=${encodeURIComponent(payment.id)}&slug=${encodeURIComponent(payment.template.slug)}&template=${encodeURIComponent(payment.template.name)}${payment.orderId ? `&orderId=${encodeURIComponent(payment.orderId)}` : ''}&amount=${payment.amount}`;
+    const onboardingUrl = `${landing}/onboarding?paymentId=${encodeURIComponent(payment.id)}&slug=${encodeURIComponent(payment.template.slug)}&template=${encodeURIComponent(payment.template.name)}${payment.orderId ? `&orderId=${encodeURIComponent(payment.orderId)}` : ''}&amount=${payment.amount}&currency=${encodeURIComponent(payment.currency || 'INR')}`;
     return res.redirect(onboardingUrl);
   } catch (err) {
     console.error('[PayU] payu-success error:', err.message);
-    return res.redirect(`${siteUrls.landingUrl()}/?payment=failed&reason=server_error`);
+    return res.redirect(`${landing}/?payment=failed&reason=server_error`);
   }
 });
 
@@ -300,8 +365,15 @@ router.post('/payu-failure', async (req, res) => {
   const params   = req.body || {};
   const { txnid } = params;
 
+  let storefront = 'IN';
   try {
     if (txnid) {
+      const failed = await prisma.payment.findFirst({
+        where:  { payuTxnId: String(txnid) },
+        select: { storefront: true },
+      });
+      if (failed && failed.storefront) storefront = failed.storefront;
+
       await prisma.payment.updateMany({
         where: { payuTxnId: txnid, status: 'pending' },
         data:  { status: 'failed' },
@@ -311,7 +383,8 @@ router.post('/payu-failure', async (req, res) => {
     // best-effort
   }
 
-  return res.redirect(`${siteUrls.landingUrl()}/?payment=failed`);
+  // Back to the site they were buying from, not whichever one is primary.
+  return res.redirect(`${landingUrlFor(storefront)}/?payment=failed`);
 });
 
 // ─── Swap payment auto-submit page ───────────────────────────────────────────
@@ -323,7 +396,7 @@ router.get('/payu-swap-link/:txnid', async (req, res) => {
   try {
     const swap = await prisma.templateSwapRequest.findFirst({
       where:   { payuLinkId: txnid, status: 'pending' },
-      include: { user: { select: { username: true, email: true, phone: true } } },
+      include: { user: { select: { username: true, email: true, phone: true, phoneCountryCode: true } } },
     });
 
     if (!swap) {
@@ -335,13 +408,17 @@ router.get('/payu-swap-link/:txnid', async (req, res) => {
     const phone    = swap.user?.phone || '';
     const firstname = String(email).split('@')[0].replace(/[^a-zA-Z0-9 _-]/g, '').slice(0, 30) || 'Customer';
 
+    // Swaps top up an existing India-priced purchase, so they settle on the
+    // India account -- storefront defaults to 'IN'.
     const params = buildPaymentParams({
       txnid,
-      amountPaise:  swap.balanceAmount,
+      amountMinor:  swap.balanceAmount,
       productinfo:  'Aamantran - Template Upgrade',
       firstname,
       email,
-      phone:        phone.replace(/\D/g, '').slice(0, 10),
+      // Not truncated: the couple may well hold a foreign number even though
+      // the invite itself was bought in rupees.
+      phone:        normalizePhoneForGateway(swap.user?.phoneCountryCode, phone),
       successUrl:   `${apiBase}/api/checkout/payu-swap-success`,
       failureUrl:   `${apiBase}/api/checkout/payu-swap-failure`,
     });
@@ -379,7 +456,8 @@ router.post('/payu-swap-success', async (req, res) => {
   const params = req.body || {};
 
   try {
-    if (!verifyResponseHash(params)) {
+    // Signed by the India account above, so verified against it here.
+    if (!verifyResponseHash(params, 'IN')) {
       return res.redirect(`${siteUrls.coupleDashboardUrl()}/?payment=failed&reason=invalid_signature`);
     }
 
@@ -477,11 +555,14 @@ router.post('/mock-success', async (req, res) => {
     });
 
     if (payment.customerEmail) {
-      const onboardingUrl = `${siteUrls.landingUrl()}/onboarding?paymentId=${encodeURIComponent(payment.id)}&slug=${encodeURIComponent(payment.template.slug)}&template=${encodeURIComponent(payment.template.name)}${payment.orderId ? `&orderId=${encodeURIComponent(payment.orderId)}` : ''}&amount=${payment.amount}`;
+      // Same storefront-aware link as the real PayU path above.
+      const landing = landingUrlFor(payment.storefront);
+      const onboardingUrl = `${landing}/onboarding?paymentId=${encodeURIComponent(payment.id)}&slug=${encodeURIComponent(payment.template.slug)}&template=${encodeURIComponent(payment.template.name)}${payment.orderId ? `&orderId=${encodeURIComponent(payment.orderId)}` : ''}&amount=${payment.amount}&currency=${encodeURIComponent(payment.currency || 'INR')}`;
       sendPurchaseConfirmationEmail({
         to: payment.customerEmail,
         templateName: payment.template.name,
         amount: payment.amount,
+        currency: payment.currency,
         orderId: payment.orderId || null,
         onboardingUrl,
       }).catch(err => console.error('[Email Error]', err.message));
@@ -532,9 +613,17 @@ router.get('/check-username', lookupLimiter, async (req, res) => {
 // POST /api/checkout/register
 router.post('/register', async (req, res) => {
   try {
-    const { paymentId, templateSlug, username, email, contact, password } = req.body || {};
+    const { paymentId, templateSlug, username, email, contact, contactCountryCode, password } = req.body || {};
     if (!paymentId || !templateSlug || !username || !email || !contact) {
       return res.status(400).json({ message: 'paymentId, templateSlug, username, email, and contact are required' });
+    }
+
+    // Validated here rather than trusted from the form, because this number is
+    // effectively permanent: updateProfile refuses to change a phone once set
+    // and sends the couple to a support ticket instead.
+    const parsedPhone = normalizePhone(contactCountryCode, contact);
+    if (!parsedPhone.valid) {
+      return res.status(400).json({ message: parsedPhone.reason });
     }
 
     const emailLower   = String(email).toLowerCase().trim();
@@ -617,7 +706,8 @@ router.post('/register', async (req, res) => {
       data: {
         email:        emailLower,
         username:     usernameNorm,
-        phone:        String(contact).trim(),
+        phone:            parsedPhone.national,
+        phoneCountryCode: parsedPhone.countryCode,
         passwordHash,
         // DPDP: carry the checkout consent record onto the account
         consentAt:     payment.consentAt || new Date(),

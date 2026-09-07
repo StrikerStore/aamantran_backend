@@ -12,6 +12,7 @@ const { runWebsiteAnalyticsRollupJob, pruneOldWebsiteData } = require('./analyti
 const { runGuestDataRetentionJob, pruneAuthAuditLogs } = require('./dataRetention.service');
 const { EXCLUDE_TEST_EVENT, EXCLUDE_TEST_OWNER } = require('../utils/testFilters');
 const { buildUnsubscribeUrl } = require('../utils/unsubscribe');
+const { landingUrlFor } = require('../utils/storefront');
 
 function toMidnight(d) {
   const out = new Date(d);
@@ -38,7 +39,13 @@ async function runOnboardingReminderJob() {
     take: 200,
   });
   for (const p of payments) {
-    const onboardingUrl = `${siteUrls.landingUrl()}/onboarding?paymentId=${encodeURIComponent(p.id)}&slug=${encodeURIComponent(p.template.slug)}&template=${encodeURIComponent(p.template.name)}&amount=${p.amount}`;
+    // Back to the storefront they bought from, carrying the currency their
+    // amount is denominated in. Both were missing: the link was hardcoded to the
+    // India site, and without `currency` the onboarding page falls back to that
+    // site's build-time constant — so an international buyer's cents rendered as
+    // rupees and the Meta Purchase event reported the wrong currency.
+    const landing = landingUrlFor(p.storefront);
+    const onboardingUrl = `${landing}/onboarding?paymentId=${encodeURIComponent(p.id)}&slug=${encodeURIComponent(p.template.slug)}&template=${encodeURIComponent(p.template.name)}&amount=${p.amount}&currency=${encodeURIComponent(p.currency || 'INR')}`;
     await sendOnboardingReminderEmail({ to: p.customerEmail, onboardingUrl }).catch(err => console.error('[Email Error] sendOnboardingReminderEmail:', err.message));
     await prisma.payment.update({ where: { id: p.id }, data: { reminderSentAt: new Date() } });
   }
@@ -74,7 +81,10 @@ async function runAbandonedCheckoutJob() {
     // Mark first so a send failure can't cause repeat emails on the next run
     await prisma.payment.update({ where: { id: p.id }, data: { abandonedEmailSentAt: new Date() } });
     if (alreadyPaid) continue;
-    const checkoutUrl = `${siteUrls.landingUrl()}/checkout/${encodeURIComponent(p.template.slug)}`;
+    // Recover them onto the storefront they abandoned, not the India one — the
+    // other site would quote a different price in a different currency and
+    // settle through a different merchant account.
+    const checkoutUrl = `${landingUrlFor(p.storefront)}/checkout/${encodeURIComponent(p.template.slug)}`;
     await sendAbandonedCheckoutEmail({
       to: p.customerEmail,
       templateName: p.template.name,

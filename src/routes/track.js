@@ -4,6 +4,7 @@ const prisma = require('../utils/prisma');
 const { parseUserAgent } = require('../utils/uaParser');
 const { trackLimiter } = require('../middleware/rateLimits');
 const siteUrls = require('../config/siteUrls');
+const { normalizeStorefront } = require('../utils/storefront');
 
 // navigator.sendBeacon sends text/plain to stay a "simple" CORS request —
 // accept it here and parse the JSON manually.
@@ -28,7 +29,10 @@ function normalizeReferrer(raw) {
     return null;
   }
   if (!host) return null;
-  const ownHosts = [siteUrls.landingUrl(), siteUrls.apiBaseUrl(), siteUrls.coupleDashboardUrl()]
+  // The global storefront is one of our own sites, not a referrer. Without it
+  // here, every visitor crossing between the two domains would be logged as
+  // inbound traffic from a competitor-looking hostname.
+  const ownHosts = [siteUrls.landingUrl(), siteUrls.landingUrlIntl(), siteUrls.apiBaseUrl(), siteUrls.coupleDashboardUrl()]
     .map((u) => { try { return new URL(u).hostname.replace(/^www\./, ''); } catch { return null; } })
     .filter(Boolean);
   if (ownHosts.some((own) => host === own || host.endsWith(`.${own}`))) return null;
@@ -73,6 +77,16 @@ router.post('/', trackLimiter, async (req, res) => {
   const utm = payload.utm && typeof payload.utm === 'object' ? payload.utm : {};
   const isPageview = type === 'pageview';
 
+  // Which of the two websites this session belongs to. Read from the JSON body,
+  // NOT from a header: the beacon is sent as text/plain precisely so it stays a
+  // "simple" CORS request, and adding a custom header would force a preflight
+  // that navigator.sendBeacon cannot make.
+  //
+  // Taken from the payload rather than the IP because the storefront is a
+  // property of the deployment the visitor loaded, not of where they are
+  // sitting -- an Indian visitor browsing the global site is global traffic.
+  const storefront = normalizeStorefront(payload.storefront);
+
   try {
     await prisma.websiteSession.upsert({
       where: { id: sessionId },
@@ -88,6 +102,7 @@ router.post('/', trackLimiter, async (req, res) => {
         country,
         region,
         city,
+        storefront,
         pageViews: isPageview ? 1 : 0,
       },
       // First-touch attribution: referrer/utm/device/geo are never overwritten.

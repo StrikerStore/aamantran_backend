@@ -39,6 +39,7 @@ router.use('/api/v1/assets',       globalAssetsRoutes);
 router.use('/api/v1/reviews',      adminReviewRoutes);
 router.use('/api/v1/analytics',    require('./adminAnalytics'));
 router.use('/api/v1/testing',      require('./testing'));
+router.use('/api/v1/settings',     require('./settings'));
 router.use('/api/assets',          globalAssetsRoutes); // Public GET access
 
 // ── User Dashboard API (JWT-protected, role: user) ───────────────────

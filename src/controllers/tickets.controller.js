@@ -33,7 +33,7 @@ async function get(req, res) {
   const ticket = await prisma.supportTicket.findUniqueOrThrow({
     where: { id: req.params.id },
     include: {
-      user:     { select: { id: true, username: true, email: true, phone: true } },
+      user:     { select: { id: true, username: true, email: true, phone: true, phoneCountryCode: true } },
       event:    { select: { id: true, slug: true, brideName: true, groomName: true } },
       messages: { orderBy: { createdAt: 'asc' } },
     },

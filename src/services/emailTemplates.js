@@ -62,8 +62,23 @@ function divider() {
 
 /* ── Templates ─────────────────────────────────────────── */
 
-function purchaseConfirmationHtml({ templateName, amount, orderId, onboardingUrl }) {
-  const amountStr = `₹${(Number(amount || 0) / 100).toLocaleString('en-IN')}`;
+/**
+ * Money in the currency it was actually charged in.
+ *
+ * `amount` is in the MINOR units of `currency` -- paise for INR, cents for USD --
+ * so the divisor is shared but the symbol and grouping are not. A dollar figure
+ * run through the rupee path came out as "₹49" with lakh grouping.
+ */
+function money(minor, currency) {
+  const value = Number(minor || 0) / 100;
+  if (String(currency || 'INR').toUpperCase() === 'USD') {
+    return `$${value.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+  }
+  return `₹${value.toLocaleString('en-IN')}`;
+}
+
+function purchaseConfirmationHtml({ templateName, amount, currency, orderId, onboardingUrl }) {
+  const amountStr = money(amount, currency);
   return wrapInLayout(`
     <p style="margin:0 0 6px;font-size:17px;font-weight:600;color:${BRAND};">Your celebration journey begins! 🎊</p>
     <p style="margin:0 0 20px;color:#5a3a3a;">Thank you for choosing Aamantran to craft your beautiful invitation. Your payment has been received and we're ready to make your day unforgettable.</p>

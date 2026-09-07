@@ -215,6 +215,7 @@ async function ensureBucketCors() {
   const rawOrigins = [
     siteUrls.apiBaseUrl(),
     siteUrls.landingUrl(),
+    siteUrls.landingUrlIntl(),
     siteUrls.adminUrl(),
     siteUrls.coupleDashboardUrl(),
     process.env.R2_PUBLIC_BASE_URL,

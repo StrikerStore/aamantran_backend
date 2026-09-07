@@ -4,6 +4,7 @@ const siteUrls   = require('../config/siteUrls');
 const { verifyInvitePreviewToken } = require('../services/previewToken');
 const { renderTemplate, buildInvitationData, buildDemoData, pickShareImage } = require('../services/templateRenderer');
 const { getAamantranSdkScript } = require('../services/aamantranSdk');
+const { storefrontFromRequest, landingUrlFor } = require('../utils/storefront');
 
 const router = express.Router();
 
@@ -29,9 +30,15 @@ router.get('/sdk/aamantran-sdk.js', (_req, res) => {
 
 /**
  * Append a fixed floating "Buy now" button to demo HTML (links to landing checkout).
+ *
+ * Demos are served from the API domain, so this page has no idea which
+ * storefront the visitor came from unless the link says so. Both websites append
+ * `?storefront=`, and the button sends them back to that site's checkout --
+ * otherwise someone browsing aamantranglobal.com taps Buy now and lands on the
+ * India site's rupee checkout, which is the whole funnel lost.
  */
-function injectDemoBuyBar(html, templateSlug) {
-  const landing = siteUrls.landingUrl();
+function injectDemoBuyBar(html, templateSlug, storefront) {
+  const landing = landingUrlFor(storefront);
   const checkoutUrl = `${landing}/checkout/${encodeURIComponent(templateSlug)}`;
   const bar = `
 <style id="aamantran-demo-buy-bar">
@@ -180,7 +187,7 @@ router.get('/demo/:slug', async (req, res) => {
 
   setNoCacheHeaders(res);
   res.setHeader('Content-Type', 'text/html; charset=utf-8');
-  res.send(injectDemoBuyBar(html, template.slug));
+  res.send(injectDemoBuyBar(html, template.slug, storefrontFromRequest(req)));
 });
 
 // GET /i/:slug — serve couple's live invitation (public)

@@ -51,6 +51,19 @@ async function sendMail({ to, subject, html }) {
 /**
  * Send a balance payment link email when admin swaps user to a pricier template.
  */
+/**
+ * Template-upgrade balance request.
+ *
+ * The ONLY money-rendering email that does not go through a currency-aware
+ * formatter, and deliberately so: `balanceAmount` is always INR paise, because
+ * the swap flow computes it from two INR template prices and settles on the
+ * India merchant account. `users.controller.js` refuses a paid upgrade outright
+ * for a customer who bought on the international storefront
+ * (`blockPaidUpgradeForIntlBuyer`), so a USD amount can never reach this ₹.
+ *
+ * If swaps are ever made storefront-aware, this hardcoded ₹ is the first thing
+ * that has to change.
+ */
 async function sendBalancePaymentEmail({
   to,
   name,
@@ -116,11 +129,11 @@ async function sendTestEmail(to) {
   });
 }
 
-async function sendPurchaseConfirmationEmail({ to, templateName, amount, orderId, onboardingUrl }) {
+async function sendPurchaseConfirmationEmail({ to, templateName, amount, currency, orderId, onboardingUrl }) {
   return sendMail({
     to,
     subject: orderId ? `Order Confirmed — ${orderId}` : 'Your Aamantran purchase confirmation',
-    html: purchaseConfirmationHtml({ templateName, amount, orderId, onboardingUrl }),
+    html: purchaseConfirmationHtml({ templateName, amount, currency, orderId, onboardingUrl }),
   });
 }
 

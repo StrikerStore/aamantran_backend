@@ -81,14 +81,38 @@ async function get(req, res) {
   res.json({ ok: true, data: { ...template, versions: versionsWithCounts } });
 }
 
+/**
+ * Optional per-template markup multiplier.
+ *
+ * Blank means "use the global default from AppSetting", which is the common
+ * case, so an empty string must resolve to null rather than 0 -- a 0 multiplier
+ * would price the template at the lowest tier on the international storefront.
+ *
+ * Bounded because this field multiplies a real price: 18 typed for 1.8 would
+ * make a template ten times dearer abroad with nothing on screen to flag it.
+ * Note these are the only numeric guards in this controller -- price, gstPercent
+ * and the rest still accept whatever Number() makes of them.
+ *
+ * @returns {{value: number|null}|{error: string}}
+ */
+function parseMarkupMultiplier(raw) {
+  if (raw === undefined || raw === null || String(raw).trim() === '') return { value: null };
+  const n = Number(raw);
+  if (!Number.isFinite(n)) return { error: 'Multiplier must be a number' };
+  if (n < 0.1 || n > 20) return { error: 'Multiplier must be between 0.1 and 20' };
+  return { value: n };
+}
+
 // POST /api/v1/templates   (multipart: templateZip + desktop/mobile thumbnail files + JSON body fields)
 async function create(req, res) {
   const { name, community, bestFor, languages, style, colourPalette, animations,
-          price, originalPrice, gstPercent, aboutText, demoData } = req.body;
+          price, originalPrice, gstPercent, markupMultiplier, aboutText, demoData } = req.body;
 
   if (!name || !community || !price || !aboutText) {
     return res.status(400).json({ ok: false, message: 'name, community, price, aboutText are required' });
   }
+  const markup = parseMarkupMultiplier(markupMultiplier);
+  if (markup.error) return res.status(400).json({ ok: false, message: markup.error });
   const zipFile = req.files?.templateZip?.[0];
   const desktopThumbFile = req.files?.desktopThumbnailImage?.[0] || req.files?.thumbnailImage?.[0];
   const mobileThumbFile = req.files?.mobileThumbnailImage?.[0];
@@ -141,6 +165,7 @@ async function create(req, res) {
       price:         Number(price),
       originalPrice: originalPrice ? Number(originalPrice) : null,
       gstPercent:    Number(gstPercent || 0),
+      markupMultiplier: markup.value,
       aboutText,
       isActive:      false,
       fieldSchema:   parsedDemo?.field_schema || null,
@@ -193,7 +218,10 @@ async function create(req, res) {
 // PUT /api/v1/templates/:id  (optional desktop/mobile thumbnail files upload)
 async function update(req, res) {
   const { name, community, bestFor, languages, style, colourPalette, animations,
-          price, originalPrice, gstPercent, aboutText } = req.body;
+          price, originalPrice, gstPercent, markupMultiplier, aboutText } = req.body;
+
+  const markup = parseMarkupMultiplier(markupMultiplier);
+  if (markup.error) return res.status(400).json({ ok: false, message: markup.error });
 
   // Save new thumbnail(s) if uploaded
   let thumbnailUrl;
@@ -225,6 +253,9 @@ async function update(req, res) {
       ...(price         && { price: Number(price) }),
       ...(originalPrice !== undefined && { originalPrice: originalPrice ? Number(originalPrice) : null }),
       ...(gstPercent    !== undefined && { gstPercent: Number(gstPercent || 0) }),
+      // Sent as '' to clear it back to the global default, so `!== undefined`
+      // rather than a truthiness check -- otherwise it could never be unset.
+      ...(markupMultiplier !== undefined && { markupMultiplier: markup.value }),
       ...(aboutText     && { aboutText }),
       ...(thumbnailUrl  !== undefined && { thumbnailUrl }),
       ...(desktopThumbnailUrl !== undefined && { desktopThumbnailUrl }),

@@ -1,3 +1,4 @@
+const { Prisma } = require('@prisma/client');
 const prisma = require('../utils/prisma');
 
 const RAW_RETENTION_DAYS = 90;
@@ -20,22 +21,51 @@ function toCountMap(rows, labelFn) {
   return acc;
 }
 
-/** Aggregate one UTC day of raw events/sessions into a WebsiteDailyStat row. */
-async function rollupDay(dayStart) {
+// The two websites roll up separately so the admin filter can show either on
+// its own or both together.
+const STOREFRONTS = ['IN', 'INTL'];
+
+/**
+ * Sessions belonging to one storefront.
+ *
+ * Rows predating the global site have a NULL storefront and were all India
+ * traffic, so 'IN' must include them -- otherwise every historical day would
+ * roll up as zero visitors the moment this shipped.
+ */
+function sessionStorefrontWhere(storefront) {
+  return storefront === 'INTL'
+    ? { storefront: 'INTL' }
+    : { OR: [{ storefront: 'IN' }, { storefront: null }] };
+}
+
+/** The same rule as raw SQL, for the conversion aggregate that needs a join. */
+function sqlStorefrontClause(storefront) {
+  return storefront === 'INTL'
+    ? Prisma.sql`AND s.storefront = 'INTL'`
+    : Prisma.sql`AND (s.storefront = 'IN' OR s.storefront IS NULL)`;
+}
+
+/** Aggregate one UTC day for one storefront into a WebsiteDailyStat row. */
+async function rollupDayForStorefront(dayStart, storefront) {
   const dayEnd = new Date(addDays(dayStart, 1).getTime() - 1);
-  const sessionWhere = { firstSeenAt: { gte: dayStart, lte: dayEnd } };
+  const sfSession = sessionStorefrontWhere(storefront);
+  const sessionWhere = { firstSeenAt: { gte: dayStart, lte: dayEnd }, ...sfSession };
+  // WebsiteEvent has no storefront column; it inherits its session's.
+  const eventWhere = { createdAt: { gte: dayStart, lte: dayEnd }, session: sfSession };
+  const sfSql = sqlStorefrontClause(storefront);
 
   const [visitors, pageViews, sourceRows, deviceRows, countryRows, conversionRaw] = await Promise.all([
     prisma.websiteSession.count({ where: sessionWhere }),
-    prisma.websiteEvent.count({ where: { type: 'pageview', createdAt: { gte: dayStart, lte: dayEnd } } }),
+    prisma.websiteEvent.count({ where: { type: 'pageview', ...eventWhere } }),
     prisma.websiteSession.groupBy({ by: ['utmSource', 'referrer'], where: sessionWhere, _count: { _all: true } }),
     prisma.websiteSession.groupBy({ by: ['deviceType'], where: sessionWhere, _count: { _all: true } }),
     prisma.websiteSession.groupBy({ by: ['country'], where: sessionWhere, _count: { _all: true } }),
     prisma.$queryRaw`
-      SELECT type, COUNT(DISTINCT sessionId) AS c
-      FROM WebsiteEvent
-      WHERE type <> 'pageview' AND createdAt >= ${dayStart} AND createdAt <= ${dayEnd}
-      GROUP BY type`,
+      SELECT e.type, COUNT(DISTINCT e.sessionId) AS c
+      FROM WebsiteEvent e
+      JOIN WebsiteSession s ON s.id = e.sessionId
+      WHERE e.type <> 'pageview' AND e.createdAt >= ${dayStart} AND e.createdAt <= ${dayEnd} ${sfSql}
+      GROUP BY e.type`,
   ]);
 
   const data = {
@@ -48,10 +78,22 @@ async function rollupDay(dayStart) {
   };
 
   await prisma.websiteDailyStat.upsert({
-    where: { date: dayStart },
-    create: { date: dayStart, ...data },
+    where:  { date_storefront: { date: dayStart, storefront } },
+    create: { date: dayStart, storefront, ...data },
     update: data,
   });
+}
+
+/**
+ * Aggregate one UTC day, one row per storefront.
+ *
+ * A day with no international traffic still gets an explicit zero row rather
+ * than no row, so a chart reads as "nobody came" instead of a gap.
+ */
+async function rollupDay(dayStart) {
+  for (const storefront of STOREFRONTS) {
+    await rollupDayForStorefront(dayStart, storefront);
+  }
 }
 
 /**
@@ -90,4 +132,4 @@ async function pruneOldWebsiteData() {
   }
 }
 
-module.exports = { runWebsiteAnalyticsRollupJob, pruneOldWebsiteData, rollupDay };
+module.exports = { runWebsiteAnalyticsRollupJob, pruneOldWebsiteData, rollupDay, rollupDayForStorefront };
