@@ -34,6 +34,10 @@ model Template {
   /// repositions the whole catalogue at once. NULL means "use the global default"
   /// from AppSetting.defaultMarkupMultiplier.
   markupMultiplier Decimal? @db.Decimal(6, 3)
+  /// Optional corner tag on the template card -- 'new', 'trending', etc. One of
+  /// lib/constants.js TEMPLATE_BADGES, or NULL for no tag. Stored as the lowercase
+  /// key, never the display label, so the wording can change without a migration.
+  badge         String?  @db.VarChar(20)
   aboutText     String   @db.Text
   isActive      Boolean  @default(false)
   buyerCount    Int      @default(0)

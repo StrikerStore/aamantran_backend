@@ -3,6 +3,7 @@ const fs           = require('fs');
 const prisma       = require('../utils/prisma');
 const slugify      = require('../utils/slugify');
 const { generateId } = require('../utils/generateId');
+const { TEMPLATE_BADGES } = require('../lib/constants');
 const {
   extractTemplateZip,
   snapshotDraftToVersion,
@@ -82,6 +83,24 @@ async function get(req, res) {
 }
 
 /**
+ * Optional corner tag. Blank or absent means no tag at all.
+ *
+ * Validated against the closed list rather than trusted, because the value is
+ * rendered straight into a CSS class on the storefront -- an unknown key would
+ * produce an unstyled badge with nothing to say why.
+ *
+ * @returns {{value: string|null}|{error: string}}
+ */
+function parseBadge(raw) {
+  if (raw === undefined || raw === null || String(raw).trim() === '') return { value: null };
+  const v = String(raw).trim().toLowerCase();
+  if (!TEMPLATE_BADGES.includes(v)) {
+    return { error: `Tag must be one of: ${TEMPLATE_BADGES.join(', ')}` };
+  }
+  return { value: v };
+}
+
+/**
  * Optional per-template markup multiplier.
  *
  * Blank means "use the global default from AppSetting", which is the common
@@ -106,13 +125,15 @@ function parseMarkupMultiplier(raw) {
 // POST /api/v1/templates   (multipart: templateZip + desktop/mobile thumbnail files + JSON body fields)
 async function create(req, res) {
   const { name, community, bestFor, languages, style, colourPalette, animations,
-          price, originalPrice, gstPercent, markupMultiplier, aboutText, demoData } = req.body;
+          price, originalPrice, gstPercent, markupMultiplier, badge, aboutText, demoData } = req.body;
 
   if (!name || !community || !price || !aboutText) {
     return res.status(400).json({ ok: false, message: 'name, community, price, aboutText are required' });
   }
   const markup = parseMarkupMultiplier(markupMultiplier);
   if (markup.error) return res.status(400).json({ ok: false, message: markup.error });
+  const tag = parseBadge(badge);
+  if (tag.error) return res.status(400).json({ ok: false, message: tag.error });
   const zipFile = req.files?.templateZip?.[0];
   const desktopThumbFile = req.files?.desktopThumbnailImage?.[0] || req.files?.thumbnailImage?.[0];
   const mobileThumbFile = req.files?.mobileThumbnailImage?.[0];
@@ -166,6 +187,7 @@ async function create(req, res) {
       originalPrice: originalPrice ? Number(originalPrice) : null,
       gstPercent:    Number(gstPercent || 0),
       markupMultiplier: markup.value,
+      badge:         tag.value,
       aboutText,
       isActive:      false,
       fieldSchema:   parsedDemo?.field_schema || null,
@@ -218,10 +240,12 @@ async function create(req, res) {
 // PUT /api/v1/templates/:id  (optional desktop/mobile thumbnail files upload)
 async function update(req, res) {
   const { name, community, bestFor, languages, style, colourPalette, animations,
-          price, originalPrice, gstPercent, markupMultiplier, aboutText } = req.body;
+          price, originalPrice, gstPercent, markupMultiplier, badge, aboutText } = req.body;
 
   const markup = parseMarkupMultiplier(markupMultiplier);
   if (markup.error) return res.status(400).json({ ok: false, message: markup.error });
+  const tag = parseBadge(badge);
+  if (tag.error) return res.status(400).json({ ok: false, message: tag.error });
 
   // Save new thumbnail(s) if uploaded
   let thumbnailUrl;
@@ -256,6 +280,8 @@ async function update(req, res) {
       // Sent as '' to clear it back to the global default, so `!== undefined`
       // rather than a truthiness check -- otherwise it could never be unset.
       ...(markupMultiplier !== undefined && { markupMultiplier: markup.value }),
+      // Sent as '' to clear the tag, so `!== undefined` rather than truthiness.
+      ...(badge !== undefined && { badge: tag.value }),
       ...(aboutText     && { aboutText }),
       ...(thumbnailUrl  !== undefined && { thumbnailUrl }),
       ...(desktopThumbnailUrl !== undefined && { desktopThumbnailUrl }),
