@@ -9,5 +9,6 @@ router.use(verifyUserJWT);
 router.get ('/',     c.listTickets);
 router.post('/',     c.createTicket);
 router.get ('/:id',  c.getTicket);
+router.post('/:id/reply', c.replyToTicket);
 
 module.exports = router;

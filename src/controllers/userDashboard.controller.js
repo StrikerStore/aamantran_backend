@@ -5,6 +5,7 @@ const { v4: uuidv4 } = require('uuid');
 const {
   sendInvitationPublishedEmail,
   sendAdminTicketRaisedEmail,
+  sendAdminTicketReplyEmail,
   sendTicketReceivedEmail,
   sendAdminReviewPostedEmail,
 } = require('../services/email.service');
@@ -1110,6 +1111,74 @@ async function getTicket(req, res) {
   return res.json({ ok: true, ticket });
 }
 
+/**
+ * Customer adds a message to a ticket they already own.
+ *
+ * Without this the thread was one-way: a customer could open a ticket and read
+ * the team's answer, but had no way to respond, so any follow-up question
+ * forced them to open a second ticket that carried none of the context.
+ *
+ * A reply on a RESOLVED ticket reopens it. The alternative - accept the message
+ * and leave the status alone - silently drops it, because nobody works a queue
+ * of resolved tickets. If the customer is still talking, the ticket is not
+ * finished.
+ */
+async function replyToTicket(req, res) {
+  const body = String(req.body?.message ?? req.body?.body ?? '').trim();
+  if (!body) return res.status(400).json({ ok: false, message: 'Message is required' });
+  if (body.length > 5000) {
+    return res.status(400).json({ ok: false, message: 'Message is too long (5000 characters max)' });
+  }
+
+  const ticket = await prisma.supportTicket.findUnique({
+    where:   { id: req.params.id },
+    include: {
+      user:  { select: { username: true, email: true } },
+      event: { select: { slug: true, brideName: true, groomName: true } },
+    },
+  });
+  // Same shape as getTicket: someone else's ticket is indistinguishable from a
+  // missing one, so an id cannot be probed for existence.
+  if (!ticket || ticket.userId !== req.user.id) {
+    return res.status(404).json({ ok: false, message: 'Ticket not found' });
+  }
+
+  const message = await prisma.ticketMessage.create({
+    data: { ticketId: ticket.id, senderRole: 'user', body },
+  });
+
+  const reopened = ticket.status === 'resolved';
+  const updated = await prisma.supportTicket.update({
+    where: { id: ticket.id },
+    // updatedAt is @updatedAt, but it is set explicitly so the ticket still
+    // rises in the team's sorted list when the status itself has not changed.
+    data:  { status: 'open', updatedAt: new Date() },
+    select: { status: true },
+  });
+
+  // Fire-and-forget, matching createTicket: the reply is saved, and a mail
+  // outage must not surface as a failure the customer retries into duplicates.
+  notifyTicketReply(ticket, body).catch(err => console.error('[Email Error]', err.message));
+
+  return res.status(201).json({ ok: true, message, status: updated.status, reopened });
+}
+
+/** Team alert that a customer has replied and is waiting on an answer. */
+async function notifyTicketReply(ticket, body) {
+  const coupleNames = [ticket.event?.groomName, ticket.event?.brideName].filter(Boolean).join(' & ');
+  await sendAdminTicketReplyEmail({
+    ticketRef: ticketReference(ticket.id),
+    ticketId:  ticket.id,
+    subject:   ticket.subject,
+    message:   body,
+    userName:  ticket.user?.username,
+    userEmail: ticket.user?.email,
+    eventName: ticket.event ? (coupleNames || ticket.event.slug) : null,
+    repliedAt: new Date().toLocaleString('en-IN', { dateStyle: 'medium', timeStyle: 'short' }),
+    adminUrl:  `${siteUrls.adminUrl()}/tickets/${ticket.id}`,
+  });
+}
+
 // ─── PROFILE ─────────────────────────────────────────────────────────────────
 
 async function updateProfile(req, res) {
@@ -1283,7 +1352,7 @@ module.exports = {
   listMedia, uploadMedia, deleteMedia,
   listGuests, exportGuestsCSV,
   listWishes, setWishVisibility, deleteWish,
-  listTickets, createTicket, getTicket,
+  listTickets, createTicket, getTicket, replyToTicket,
   updateProfile,
   submitReview,
 };

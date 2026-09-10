@@ -16,6 +16,7 @@ const {
 const {
   adminOrderPlacedHtml,
   adminTicketRaisedHtml,
+  adminTicketReplyHtml,
   adminReviewPostedHtml,
   ticketReceivedHtml,
 } = require('./internalEmailTemplates');
@@ -291,6 +292,14 @@ async function sendAdminTicketRaisedEmail(data) {
   });
 }
 
+/** Team alert: a customer replied on an open ticket. */
+async function sendAdminTicketReplyEmail(data) {
+  return sendInternalMail({
+    subject: `[Ticket ${data.ticketRef}] Customer replied - ${data.subject}`,
+    html: adminTicketReplyHtml(data),
+  });
+}
+
 /** Team alert: a review was posted or edited. */
 async function sendAdminReviewPostedEmail(data) {
   return sendInternalMail({
@@ -313,6 +322,7 @@ module.exports = {
   sendInternalMail,
   sendAdminOrderPlacedEmail,
   sendAdminTicketRaisedEmail,
+  sendAdminTicketReplyEmail,
   sendAdminReviewPostedEmail,
   sendTicketReceivedEmail,
   sendBalancePaymentEmail,

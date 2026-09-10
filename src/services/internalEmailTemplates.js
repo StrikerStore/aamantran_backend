@@ -140,6 +140,36 @@ function adminTicketRaisedHtml({
   );
 }
 
+/**
+ * Team alert: a customer replied on an existing ticket.
+ *
+ * Deliberately separate from adminTicketRaisedHtml rather than a flag on it.
+ * A reply is a different event with a different urgency - the ticket is already
+ * open and someone is waiting on us - so the heading, the timestamp label and
+ * the button all read differently. It reuses the same layout primitives, so the
+ * two mails still look like siblings in the inbox.
+ */
+function adminTicketReplyHtml({
+  ticketRef, ticketId, subject, message, userName, userEmail, eventName, repliedAt, adminUrl,
+}) {
+  const from = `${esc(userName || '—')}${userEmail ? ` &lt;${mailtoLink(userEmail)}&gt;` : ''}`;
+  const rows = [
+    internalRow('Ticket', `<span style="font-family:monospace;letter-spacing:1px;">${esc(ticketRef)}</span>`),
+    internalRow('Subject', esc(subject)),
+    internalRow('From', from),
+    eventName ? internalRow('Event', esc(eventName)) : '',
+    internalRow('Replied at', esc(repliedAt)),
+    internalRow('Ticket ID', `<span style="font-family:monospace;font-size:12px;">${esc(ticketId)}</span>`),
+  ].filter(Boolean).join('');
+
+  return internalLayout(
+    'Customer replied on a ticket',
+    rows,
+    quoteBlock('Reply', escMultiline(message))
+      + (adminUrl ? internalBtn('Reply in admin', adminUrl) : '')
+  );
+}
+
 /** Team alert: a review was posted or edited. */
 function adminReviewPostedHtml({
   rating, reviewText, coupleNames, location, templateName,
@@ -196,6 +226,7 @@ function ticketReceivedHtml({ name, ticketRef, subject, message }) {
 module.exports = {
   adminOrderPlacedHtml,
   adminTicketRaisedHtml,
+  adminTicketReplyHtml,
   adminReviewPostedHtml,
   ticketReceivedHtml,
   esc,
