@@ -1112,6 +1112,50 @@ async function getTicket(req, res) {
 }
 
 /**
+ * Just the messages on a ticket, optionally only those newer than `since`.
+ *
+ * Exists so an open thread can poll itself current without re-fetching the whole
+ * ticket - user, event and every message - every few seconds. With nothing new
+ * the reply is an empty array and a status, a few dozen bytes.
+ *
+ * A separate route rather than a `?since=` flag on getTicket: that one already
+ * has callers expecting a full ticket, and a query parameter that quietly
+ * changes the response shape is what breaks something months later.
+ *
+ * `status` rides along so the caller can update a badge when support resolves
+ * the ticket while the customer is looking at it.
+ */
+async function getTicketMessages(req, res) {
+  const ticket = await prisma.supportTicket.findUnique({
+    where:  { id: req.params.id },
+    select: { id: true, userId: true, status: true },
+  });
+  // 404 rather than 403 on someone else's ticket, matching getTicket, so an id
+  // cannot be probed for existence.
+  if (!ticket || ticket.userId !== req.user.id) {
+    return res.status(404).json({ ok: false, message: 'Ticket not found' });
+  }
+
+  const messages = await prisma.ticketMessage.findMany({
+    where:   { ticketId: ticket.id, ...sinceFilter(req.query.since) },
+    orderBy: { createdAt: 'asc' },
+  });
+  return res.json({ ok: true, messages, status: ticket.status });
+}
+
+/**
+ * Prisma `createdAt` filter for a `since` query value.
+ *
+ * An absent or unparseable value returns no filter at all, so the caller gets
+ * the whole thread and degrades to a plain refresh instead of an error.
+ */
+function sinceFilter(since) {
+  if (!since) return {};
+  const at = new Date(String(since));
+  return Number.isNaN(at.getTime()) ? {} : { createdAt: { gt: at } };
+}
+
+/**
  * Customer adds a message to a ticket they already own.
  *
  * Without this the thread was one-way: a customer could open a ticket and read
@@ -1352,7 +1396,7 @@ module.exports = {
   listMedia, uploadMedia, deleteMedia,
   listGuests, exportGuestsCSV,
   listWishes, setWishVisibility, deleteWish,
-  listTickets, createTicket, getTicket, replyToTicket,
+  listTickets, createTicket, getTicket, getTicketMessages, replyToTicket,
   updateProfile,
   submitReview,
 };

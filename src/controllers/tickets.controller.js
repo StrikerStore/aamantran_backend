@@ -41,6 +41,39 @@ async function get(req, res) {
   res.json({ ok: true, data: ticket });
 }
 
+// GET /api/v1/tickets/:id/messages?since=<ISO>
+/**
+ * Just the messages, optionally only those newer than `since`.
+ *
+ * Polled by an open ticket thread so it stays current without re-fetching the
+ * whole ticket - user, event and every message - every few seconds. With
+ * nothing new this is an empty array and a status.
+ *
+ * Kept separate from `get` rather than added as a flag on it: that route has
+ * callers expecting a full ticket, and a query parameter that quietly changes
+ * the response shape is what breaks something months later.
+ */
+async function messages(req, res) {
+  const ticket = await prisma.supportTicket.findUniqueOrThrow({
+    where:  { id: req.params.id },
+    select: { id: true, status: true },
+  });
+
+  // An absent or unparseable `since` returns the whole thread, so a caller with
+  // a bad value degrades to a plain refresh instead of an error.
+  let where = { ticketId: ticket.id };
+  if (req.query.since) {
+    const at = new Date(String(req.query.since));
+    if (!Number.isNaN(at.getTime())) where.createdAt = { gt: at };
+  }
+
+  const list = await prisma.ticketMessage.findMany({
+    where,
+    orderBy: { createdAt: 'asc' },
+  });
+  res.json({ ok: true, messages: list, status: ticket.status });
+}
+
 // POST /api/v1/tickets/:id/reply
 async function reply(req, res) {
   const { body } = req.body;
@@ -98,4 +131,4 @@ async function reopen(req, res) {
   res.json({ ok: true, data: ticket });
 }
 
-module.exports = { list, get, reply, resolve, reopen };
+module.exports = { list, get, messages, reply, resolve, reopen };
