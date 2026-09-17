@@ -31,6 +31,7 @@ const INTERACTION_EVENTS = [
   'try_demo_created',          // personal demo link generated
   'try_demo_opened',           // personal demo link opened
   'try_demo_to_checkout',      // buyer went from a personal demo to checkout
+  'occasion_interest',         // shopper asked about an occasion the shop does not stock yet
 ];
 
 const EVENT_TYPES = ['pageview', ...FUNNEL_STAGES, ...INTERACTION_EVENTS];
