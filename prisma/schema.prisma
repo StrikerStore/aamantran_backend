@@ -39,6 +39,10 @@ model Template {
   /// key, never the display label, so the wording can change without a migration.
   badge         String?  @db.VarChar(20)
   aboutText     String   @db.Text
+  /// One-line storefront sentence for gallery cards and the product page.
+  shortDescription String? @db.VarChar(300)
+  /// Comma-separated capability chips from TEMPLATE_HIGHLIGHTS (src/lib/constants.js)
+  highlights    String?  @db.VarChar(500)
   isActive      Boolean  @default(false)
   buyerCount    Int      @default(0)
   avgRating     Decimal  @default(0) @db.Decimal(3, 2)
@@ -65,6 +69,7 @@ model Template {
   payments      Payment[]
   reviews       TemplateReview[]
   swapRequests  TemplateSwapRequest[]
+  trialDemos    TrialDemo[]
   versions      TemplateVersion[]  @relation("TemplateVersions")
 
   @@index([sandboxOwnerId])
@@ -508,9 +513,44 @@ model Payment {
   consentAt         DateTime? // DPDP: when Terms + Privacy Policy were accepted at checkout
   policyVersion     String?   // DPDP: privacy-policy version accepted
   marketingOptIn    Boolean  @default(false) // DPDP: consent to reminder/offer emails (abandoned checkout)
+  /// Set when the buyer arrived from a "try it with your names" demo, so the
+  /// builder can be prefilled with the details they already typed. The demo row
+  /// is erased within a day and this becomes NULL; the payment is untouched.
+  trialDemoId       String?
+  trialDemo         TrialDemo? @relation(fields: [trialDemoId], references: [id], onDelete: SetNull)
   createdAt         DateTime @default(now())
 
   @@index([storefront, status])
+  @@index([trialDemoId])
+}
+
+/// "Try it with your names" — a personal, watermarked demo of a real template,
+/// created with no account and no payment.
+///
+/// This holds the only personal data a visitor gives before buying, so it is
+/// built to be short-lived: `linkExpiresAt` stops the link working after
+/// minutes, and the scheduled purge deletes the row once `dataExpiresAt` passes.
+/// The caller's IP is never stored — `ipHash` is a salted SHA-256 used only to
+/// cap how many demos one address may create, and it goes with the row.
+model TrialDemo {
+  id            String   @id @default(uuid())
+  /// 32 hex characters from crypto.randomBytes: unguessable and URL-safe.
+  token         String   @unique @db.VarChar(32)
+  templateId    String
+  template      Template @relation(fields: [templateId], references: [id], onDelete: Cascade)
+  /// The validated payload: names, wedding date, venue, city and ceremonies.
+  payload       Json
+  ipHash        String?  @db.VarChar(64)
+  linkExpiresAt DateTime
+  dataExpiresAt DateTime
+  viewCount     Int      @default(0)
+  createdAt     DateTime @default(now())
+
+  payments      Payment[]
+
+  @@index([dataExpiresAt])
+  @@index([ipHash, createdAt])
+  @@index([templateId])
 }
 
 model CouponCode {
@@ -782,7 +822,7 @@ model WebsiteEvent {
   id        String   @id @default(uuid())
   sessionId String   @db.VarChar(64)
   session   WebsiteSession @relation(fields: [sessionId], references: [id], onDelete: Cascade)
-  type      String   @db.VarChar(32)  // pageview|view_template|initiate_checkout|purchase|register_complete
+  type      String   @db.VarChar(32)  // allowlist: src/lib/analyticsEvents.js (pageview, funnel stages, storefront interactions)
   path      String   @db.VarChar(512)
   metadata  Json?
   createdAt DateTime @default(now())

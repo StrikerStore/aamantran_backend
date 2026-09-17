@@ -4,7 +4,7 @@ const { EXCLUDE_TEST_OWNER } = require('../utils/testFilters');
 
 const MAX_RANGE_DAYS = 92;
 const LIVE_WINDOW_MS = 5 * 60 * 1000;
-const FUNNEL_STAGES = ['view_template', 'initiate_checkout', 'purchase', 'register_complete'];
+const { FUNNEL_STAGES } = require('../lib/analyticsEvents');
 
 /** Parse ?from&to (YYYY-MM-DD) into a UTC day-aligned range, default last 30 days. */
 function parseRange(query) {

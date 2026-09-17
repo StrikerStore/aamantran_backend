@@ -47,6 +47,18 @@ const publicInviteLimiter = rateLimit({
   message: { message: 'Too many requests. Please try again later.' },
 });
 
+// "Try it with your names" — the only public endpoint that writes personal data
+// without a login. The window is an hour rather than fifteen minutes because a
+// person needs one or two demos, not twenty; the service applies its own per-IP
+// and daily caps on top, so a shared office address cannot exhaust the site.
+const trialDemoLimiter = rateLimit({
+  windowMs: 60 * 60 * 1000,
+  max: Number(process.env.RATE_LIMIT_TRIAL_DEMO_MAX || 5),
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { message: 'You have created a few demos already. Please try again later.' },
+});
+
 const lookupLimiter = rateLimit({
   windowMs: 15 * 60 * 1000,
   max: Number(process.env.RATE_LIMIT_LOOKUP_MAX || 60),
@@ -100,4 +112,5 @@ module.exports = {
   publicInviteLimiter,
   lookupLimiter,
   trackLimiter,
+  trialDemoLimiter,
 };

@@ -15,6 +15,7 @@ const siteUrls     = require('../config/siteUrls');
 const storage      = require('../config/storage');
 const objectStorage = require('../services/objectStorage');
 const { normalizeDemoCustomFieldRows } = require('../utils/dateNormalize');
+const { normalizeShortDescription, normalizeHighlights } = require('../utils/templateMarketing');
 const { EXCLUDE_TEST_EVENT, EXCLUDE_SANDBOX_TEMPLATE } = require('../utils/testFilters');
 const { purgeTestEvents } = require('../services/testAccount.service');
 
@@ -43,6 +44,7 @@ async function list(req, res) {
         thumbnailUrl: true, desktopThumbnailUrl: true, mobileThumbnailUrl: true, community: true,
         desktopEntryFile: true, mobileEntryFile: true,
         bestFor: true, languages: true,
+        shortDescription: true, highlights: true,
         price: true, originalPrice: true,
         isActive: true, buyerCount: true, avgRating: true,
         gstPercent: true, fieldSchema: true, releasedAt: true, createdAt: true,
@@ -125,7 +127,8 @@ function parseMarkupMultiplier(raw) {
 // POST /api/v1/templates   (multipart: templateZip + desktop/mobile thumbnail files + JSON body fields)
 async function create(req, res) {
   const { name, community, bestFor, languages, style, colourPalette, animations,
-          price, originalPrice, gstPercent, markupMultiplier, badge, aboutText, demoData } = req.body;
+          price, originalPrice, gstPercent, markupMultiplier, badge, aboutText,
+          shortDescription, highlights, demoData } = req.body;
 
   if (!name || !community || !price || !aboutText) {
     return res.status(400).json({ ok: false, message: 'name, community, price, aboutText are required' });
@@ -189,6 +192,8 @@ async function create(req, res) {
       markupMultiplier: markup.value,
       badge:         tag.value,
       aboutText,
+      shortDescription: normalizeShortDescription(shortDescription),
+      highlights:       normalizeHighlights(highlights),
       isActive:      false,
       fieldSchema:   parsedDemo?.field_schema || null,
       ...(parsedDemo && {
@@ -240,7 +245,8 @@ async function create(req, res) {
 // PUT /api/v1/templates/:id  (optional desktop/mobile thumbnail files upload)
 async function update(req, res) {
   const { name, community, bestFor, languages, style, colourPalette, animations,
-          price, originalPrice, gstPercent, markupMultiplier, badge, aboutText } = req.body;
+          price, originalPrice, gstPercent, markupMultiplier, badge, aboutText,
+          shortDescription, highlights } = req.body;
 
   const markup = parseMarkupMultiplier(markupMultiplier);
   if (markup.error) return res.status(400).json({ ok: false, message: markup.error });
@@ -283,6 +289,9 @@ async function update(req, res) {
       // Sent as '' to clear the tag, so `!== undefined` rather than truthiness.
       ...(badge !== undefined && { badge: tag.value }),
       ...(aboutText     && { aboutText }),
+      // Sent as '' by the admin form when cleared, which normalises to null.
+      ...(shortDescription !== undefined && { shortDescription: normalizeShortDescription(shortDescription) }),
+      ...(highlights       !== undefined && { highlights:       normalizeHighlights(highlights) }),
       ...(thumbnailUrl  !== undefined && { thumbnailUrl }),
       ...(desktopThumbnailUrl !== undefined && { desktopThumbnailUrl }),
       ...(mobileThumbnailUrl !== undefined && { mobileThumbnailUrl }),

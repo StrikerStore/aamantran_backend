@@ -13,7 +13,7 @@ const { addEventMedia, removeEventMedia } = require('../services/eventMedia.serv
 const { normalizeOptionalHttpUrl, normalizeOptionalHashtag } = require('../utils/urlNormalize');
 const siteUrls = require('../config/siteUrls');
 const { mintInvitePreviewToken } = require('../services/previewToken');
-const { EXCLUDE_TEST_OWNER } = require('../utils/testFilters');
+const { recalcTemplateRating } = require('../utils/reviewAggregates');
 
 // ─── HELPERS ─────────────────────────────────────────────────────────────────
 
@@ -1345,16 +1345,10 @@ async function submitReview(req, res) {
         data: { templateId, userId: req.user.id, ...fields, couplePhotoUrl: couplePhotoUrl || null },
       });
 
-  // Update template avgRating
-  const agg = await prisma.templateReview.aggregate({
-    where: { templateId, ...EXCLUDE_TEST_OWNER },
-    _avg: { rating: true },
-    _count: true,
-  });
-  await prisma.template.update({
-    where: { id: templateId },
-    data: { avgRating: agg._avg.rating || 0 },
-  });
+  // Update template avgRating. Shared helper so this matches the admin panel:
+  // hidden and curated reviews are excluded, which this call site previously
+  // got wrong — it counted hidden reviews too.
+  await recalcTemplateRating(templateId);
 
   // Team alert. Edits are reported too, marked as such — an edited review still
   // changes what the public store shows and can still need moderating.
@@ -1399,4 +1393,6 @@ module.exports = {
   listTickets, createTicket, getTicket, getTicketMessages, replyToTicket,
   updateProfile,
   submitReview,
+  // Exported for services/trialDemo.service.js, which pre-fills a new event from a demo.
+  syncEventExpiry,
 };

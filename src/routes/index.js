@@ -59,6 +59,7 @@ const publicTemplateRoutes = require('./publicTemplates');
 router.use('/api/templates',  publicTemplateRoutes);
 router.use('/api/reviews',    publicTemplateRoutes); // reuse, separate handler
 router.use('/api/checkout',   publicCheckoutRoutes);
+router.use('/api/trial-demo', require('./publicTrialDemo')); // "Try it with your names" — no account, no payment
 router.use('/api/public',     publicInviteRoutes);
 router.use('/api/contact',   require('./contact'));
 router.use('/api/unsubscribe', require('./unsubscribe')); // DPDP: one-click marketing opt-out

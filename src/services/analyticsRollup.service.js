@@ -1,5 +1,8 @@
 const { Prisma } = require('@prisma/client');
 const prisma = require('../utils/prisma');
+// Only funnel stages are conversions. Storefront interaction events share the
+// WebsiteEvent table, but must never enter the stored daily conversion breakdown.
+const { FUNNEL_STAGES } = require('../lib/analyticsEvents');
 
 const RAW_RETENTION_DAYS = 90;
 const MAX_DAYS_PER_RUN = 120;
@@ -64,7 +67,7 @@ async function rollupDayForStorefront(dayStart, storefront) {
       SELECT e.type, COUNT(DISTINCT e.sessionId) AS c
       FROM WebsiteEvent e
       JOIN WebsiteSession s ON s.id = e.sessionId
-      WHERE e.type <> 'pageview' AND e.createdAt >= ${dayStart} AND e.createdAt <= ${dayEnd} ${sfSql}
+      WHERE e.type IN (${Prisma.join(FUNNEL_STAGES)}) AND e.createdAt >= ${dayStart} AND e.createdAt <= ${dayEnd} ${sfSql}
       GROUP BY e.type`,
   ]);
 

@@ -21,6 +21,7 @@ const {
 const siteUrls = require('../config/siteUrls');
 const { validateNewPassword } = require('../utils/authSecurity');
 const { POLICY_VERSION } = require('../lib/constants');
+const { trialIdForOrder, applyTrialPrefill } = require('../services/trialDemo.service');
 const {
   storefrontFromRequest,
   resolveStorefrontForOrder,
@@ -211,7 +212,7 @@ router.post('/coupon-preview', async (req, res) => {
 // POST /api/checkout/order — creates pending payment, returns PayU form params
 router.post('/order', async (req, res) => {
   try {
-    const { templateSlug, couponCode, customerEmail, customerContact, customerContactCountryCode, consent, marketingOptIn } = req.body || {};
+    const { templateSlug, couponCode, customerEmail, customerContact, customerContactCountryCode, consent, marketingOptIn, trialToken } = req.body || {};
     if (!templateSlug) return res.status(400).json({ message: 'templateSlug is required' });
     // DPDP: specific, informed consent must be recorded before personal data is processed
     if (consent !== true) {
@@ -257,6 +258,9 @@ router.post('/order', async (req, res) => {
 
     const txnid   = uuidv4().replace(/-/g, '').slice(0, 25);
     const orderId = generateOrderId();
+    // A "try it with your names" demo of this design, if the buyer came from one.
+    // Ignored, never refused, when it is for another design or has expired.
+    const trialDemoId = await trialIdForOrder(trialToken, template.id).catch(() => null);
 
     const payment = await prisma.payment.create({
       data: {
@@ -282,6 +286,7 @@ router.post('/order', async (req, res) => {
         consentAt:     new Date(),
         policyVersion: POLICY_VERSION,
         marketingOptIn: marketingOptIn === true,
+        ...(trialDemoId ? { trialDemoId } : {}),
       },
       select: { id: true, orderId: true },
     });
@@ -327,6 +332,39 @@ router.post('/order', async (req, res) => {
 });
 
 // POST /api/checkout/payu-success — PayU redirects here on successful payment
+// ─── Payment recovery ───────────────────────────────────────────────────────
+//
+// A buyer whose payment failed used to land on the homepage, with the template
+// they had chosen and the form they had filled in both gone. A definite failure
+// now returns them to that template's checkout, on their own storefront, so a
+// retry is one step instead of a fresh search.
+//
+// Only a verified, definite failure goes to a retry. A PENDING result is still
+// being settled by the bank and may yet succeed; inviting a second attempt
+// there risks charging the buyer twice, so pending keeps its old destination.
+
+/**
+ * Short, URL-safe failure code from a PayU response. Prefers PayU's detailed
+ * `unmappedstatus` (e.g. userCancelled, bounced) over the coarse `status`.
+ * Free-text gateway messages are deliberately never copied into the URL.
+ */
+function failureReasonFrom(params) {
+  const raw = String(params?.unmappedstatus || params?.status || 'unknown');
+  const clean = raw.toLowerCase().replace(/[^a-z0-9_-]/g, '').slice(0, 32);
+  return clean || 'unknown';
+}
+
+/** True when PayU says the outcome is not final yet. */
+function isPendingResult(params) {
+  return String(params?.status || '').toLowerCase() === 'pending';
+}
+
+/** The template's own checkout with a failure notice, or null if the template is unknown. */
+function retryCheckoutUrl(landing, templateSlug, reason) {
+  if (!templateSlug) return null;
+  return `${landing}/checkout/${encodeURIComponent(templateSlug)}?payment=failed&reason=${encodeURIComponent(reason)}`;
+}
+
 router.post('/payu-success', async (req, res) => {
   const params = req.body || {};
 
@@ -360,7 +398,11 @@ router.post('/payu-success', async (req, res) => {
     }
 
     if (status !== 'success') {
-      return res.redirect(`${landing}/?payment=failed&reason=${encodeURIComponent(status || 'unknown')}`);
+      // The hash has verified, so this outcome is genuine. Pending may still
+      // settle, so it never gets a retry link (see "Payment recovery" above).
+      const reason = failureReasonFrom(params);
+      const retry  = isPendingResult(params) ? null : retryCheckoutUrl(landing, payment?.template?.slug, reason);
+      return res.redirect(retry || `${landing}/?payment=failed&reason=${encodeURIComponent(status || 'unknown')}`);
     }
 
     if (!payment) {
@@ -385,13 +427,15 @@ router.post('/payu-failure', async (req, res) => {
   const { txnid } = params;
 
   let storefront = 'IN';
+  let templateSlug = null;
   try {
     if (txnid) {
       const failed = await prisma.payment.findFirst({
         where:  { payuTxnId: String(txnid) },
-        select: { storefront: true },
+        select: { storefront: true, template: { select: { slug: true } } },
       });
       if (failed && failed.storefront) storefront = failed.storefront;
+      if (failed && failed.template) templateSlug = failed.template.slug;
 
       await prisma.payment.updateMany({
         where: { payuTxnId: txnid, status: 'pending' },
@@ -402,8 +446,39 @@ router.post('/payu-failure', async (req, res) => {
     // best-effort
   }
 
-  // Back to the site they were buying from, not whichever one is primary.
-  return res.redirect(`${landingUrlFor(storefront)}/?payment=failed`);
+  // Back to the site they were buying from, not whichever one is primary --
+  // and, for a definite failure, straight back to the template they chose.
+  const landing = landingUrlFor(storefront);
+  const retry = isPendingResult(params) ? null : retryCheckoutUrl(landing, templateSlug, failureReasonFrom(params));
+  return res.redirect(retry || `${landing}/?payment=failed`);
+});
+
+// GET /api/checkout/payment-status/:paymentId
+//
+// Lets the onboarding page tell "still confirming" from "failed" from "already
+// registered" instead of assuming every arrival is a finished purchase. The
+// paymentId is the unguessable UUID already carried in the onboarding link.
+// Deliberately returns no personal data: no email, name, amount or order id.
+router.get('/payment-status/:paymentId', lookupLimiter, async (req, res) => {
+  const { paymentId } = req.params;
+  if (!/^[0-9a-f-]{36}$/i.test(String(paymentId || ''))) {
+    return res.status(400).json({ message: 'Invalid payment id' });
+  }
+  try {
+    const payment = await prisma.payment.findUnique({
+      where:  { id: paymentId },
+      select: { status: true, userId: true, template: { select: { slug: true } } },
+    });
+    if (!payment) return res.status(404).json({ message: 'Payment not found' });
+    return res.json({
+      status:       payment.status,
+      registered:   Boolean(payment.userId),
+      templateSlug: payment.template?.slug || null,
+    });
+  } catch (err) {
+    console.error('[checkout] payment-status failed:', err.message);
+    return res.status(500).json({ message: 'Could not read payment status' });
+  }
 });
 
 // ─── Swap payment auto-submit page ───────────────────────────────────────────
@@ -705,12 +780,13 @@ router.post('/register', async (req, res) => {
         where: { id: paymentId },
         data:  { userId: existingUser.id, eventId: event.id, isOnboarded: true, onboardedAt: new Date() },
       });
+      const prefilledLinked = await applyTrialPrefill(event.id, payment.trialDemoId);
       sendOnboardingCompleteEmail({
         to:           existingUser.email,
         username:     existingUser.username,
         dashboardUrl: siteUrls.coupleDashboardUrl(),
       }).catch(err => console.error('[Email Error]', err.message));
-      return res.json({ ok: true, linked: true, eventCreated: true, dashboardUrl: siteUrls.coupleDashboardUrl() });
+      return res.json({ ok: true, linked: true, eventCreated: true, prefilled: prefilledLinked, dashboardUrl: siteUrls.coupleDashboardUrl() });
     }
 
     const newAccountPasswordError = !password
@@ -754,13 +830,16 @@ router.post('/register', async (req, res) => {
       where: { id: paymentId },
       data:  { userId: user.id, eventId: event.id, isOnboarded: true, onboardedAt: new Date() },
     });
+    // After the purchase is bound to the account, so a failed prefill can never
+    // cost the couple their registration.
+    const prefilled = await applyTrialPrefill(event.id, payment.trialDemoId);
     sendOnboardingCompleteEmail({
       to:           emailLower,
       username:     usernameNorm,
       dashboardUrl: siteUrls.coupleDashboardUrl(),
     }).catch(err => console.error('[Email Error]', err.message));
 
-    return res.json({ ok: true, linked: false, eventCreated: true, dashboardUrl: siteUrls.coupleDashboardUrl() });
+    return res.json({ ok: true, linked: false, eventCreated: true, prefilled, dashboardUrl: siteUrls.coupleDashboardUrl() });
   } catch (err) {
     console.error(err);
     if (err.code === 'P2002') {

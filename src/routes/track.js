@@ -5,18 +5,15 @@ const { parseUserAgent } = require('../utils/uaParser');
 const { trackLimiter } = require('../middleware/rateLimits');
 const siteUrls = require('../config/siteUrls');
 const { normalizeStorefront } = require('../utils/storefront');
+const { EVENT_TYPES: ALLOWED_EVENT_TYPES } = require('../lib/analyticsEvents');
 
 // navigator.sendBeacon sends text/plain to stay a "simple" CORS request —
 // accept it here and parse the JSON manually.
 router.use(express.text({ type: 'text/plain', limit: '16kb' }));
 
-const EVENT_TYPES = new Set([
-  'pageview',
-  'view_template',
-  'initiate_checkout',
-  'purchase',
-  'register_complete',
-]);
+// Defined once in lib/analyticsEvents.js, shared with the admin funnel and the
+// nightly rollup so the three can never disagree about what a type means.
+const EVENT_TYPES = new Set(ALLOWED_EVENT_TYPES);
 const SESSION_ID_RE = /^[a-zA-Z0-9-]{16,64}$/;
 
 /** Referrer → hostname; own domains count as direct (null). */

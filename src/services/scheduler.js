@@ -10,6 +10,7 @@ const {
 const siteUrls = require('../config/siteUrls');
 const { runWebsiteAnalyticsRollupJob, pruneOldWebsiteData } = require('./analyticsRollup.service');
 const { runGuestDataRetentionJob, pruneAuthAuditLogs } = require('./dataRetention.service');
+const { purgeExpiredTrialDemos } = require('./trialDemo.service');
 const { EXCLUDE_TEST_EVENT, EXCLUDE_TEST_OWNER } = require('../utils/testFilters');
 const { buildUnsubscribeUrl } = require('../utils/unsubscribe');
 const { landingUrlFor } = require('../utils/storefront');
@@ -164,6 +165,12 @@ cron.schedule('30 2 * * *', () => {
   runWebsiteAnalyticsRollupJob()
     .then(() => pruneOldWebsiteData())
     .catch((err) => console.error('[analytics] rollup job failed:', err.message));
+});
+// Try-it demos: the link dies within minutes, the typed details within a day.
+// Swept often and cheaply, so the personal data in them is never left lying
+// around between nightly jobs.
+cron.schedule('*/15 * * * *', () => {
+  purgeExpiredTrialDemos().catch((err) => console.error('[trial-demo] purge failed:', err.message));
 });
 // DPDP retention: warn owners ~day 88, erase guest data ≥90 days after invite expiry;
 // prune auth audit logs past the 1-year statutory retention window

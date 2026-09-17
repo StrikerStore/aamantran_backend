@@ -7,6 +7,7 @@ const prisma  = require('../utils/prisma');
 const storage       = require('../config/storage');
 const objectStorage = require('../services/objectStorage');
 const { EXCLUDE_TEST_OWNER } = require('../utils/testFilters');
+const { recalcTemplateRating } = require('../utils/reviewAggregates');
 
 const photoUpload = multer({
   storage: multer.memoryStorage(),
@@ -93,7 +94,7 @@ router.post('/', photoUpload.single('couplePhoto'), async (req, res) => {
       select: REVIEW_SELECT,
     });
 
-    await recalcAvgRating(templateId);
+    await recalcTemplateRating(templateId);
     res.status(201).json(review);
   } catch (err) {
     res.status(500).json({ message: err.message });
@@ -108,7 +109,7 @@ router.patch('/:id/hide', async (req, res) => {
       data:  { isHidden: true },
       select: REVIEW_SELECT,
     });
-    await recalcAvgRating(review.template.id);
+    await recalcTemplateRating(review.template.id);
     res.json(review);
   } catch {
     res.status(404).json({ message: 'Review not found' });
@@ -123,7 +124,7 @@ router.patch('/:id/show', async (req, res) => {
       data:  { isHidden: false },
       select: REVIEW_SELECT,
     });
-    await recalcAvgRating(review.template.id);
+    await recalcTemplateRating(review.template.id);
     res.json(review);
   } catch {
     res.status(404).json({ message: 'Review not found' });
@@ -139,22 +140,11 @@ router.delete('/:id', async (req, res) => {
     });
     if (!review) return res.status(404).json({ message: 'Review not found' });
     await prisma.templateReview.delete({ where: { id: req.params.id } });
-    await recalcAvgRating(review.templateId);
+    await recalcTemplateRating(review.templateId);
     res.json({ ok: true });
   } catch {
     res.status(404).json({ message: 'Review not found' });
   }
 });
-
-async function recalcAvgRating(templateId) {
-  const agg = await prisma.templateReview.aggregate({
-    where: { templateId, isHidden: false, ...EXCLUDE_TEST_OWNER },
-    _avg:  { rating: true },
-  });
-  await prisma.template.update({
-    where: { id: templateId },
-    data:  { avgRating: agg._avg.rating || 0 },
-  });
-}
 
 module.exports = router;

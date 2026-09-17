@@ -2,9 +2,10 @@ const express    = require('express');
 const prisma     = require('../utils/prisma');
 const siteUrls   = require('../config/siteUrls');
 const { verifyInvitePreviewToken } = require('../services/previewToken');
-const { renderTemplate, buildInvitationData, buildDemoData, pickShareImage } = require('../services/templateRenderer');
+const { renderTemplate, buildInvitationData, buildDemoData, pickShareImage, injectSocialMeta } = require('../services/templateRenderer');
 const { getAamantranSdkScript } = require('../services/aamantranSdk');
-const { storefrontFromRequest, landingUrlFor } = require('../utils/storefront');
+const { storefrontFromRequest, landingUrlFor, normalizeStorefront } = require('../utils/storefront');
+const { LINK_MINUTES, findTrialForRender, overlayTrialOnDemoData } = require('../services/trialDemo.service');
 
 const router = express.Router();
 
@@ -37,9 +38,13 @@ router.get('/sdk/aamantran-sdk.js', (_req, res) => {
  * otherwise someone browsing aamantranglobal.com taps Buy now and lands on the
  * India site's rupee checkout, which is the whole funnel lost.
  */
-function injectDemoBuyBar(html, templateSlug, storefront) {
+function injectDemoBuyBar(html, templateSlug, storefront, options = {}) {
   const landing = landingUrlFor(storefront);
-  const checkoutUrl = `${landing}/checkout/${encodeURIComponent(templateSlug)}`;
+  const checkoutUrl = options.checkoutUrl || `${landing}/checkout/${encodeURIComponent(templateSlug)}`;
+  // A personal demo is usually framed by the website, so Buy must leave the
+  // frame. With no options this function's output is unchanged for /demo.
+  const buyTarget = options.trial ? ' target="_top"' : '';
+  const trialExtras = options.trial ? trialDemoExtras({ ...options.trial, checkoutUrl }) : '';
   const bar = `
 <style id="aamantran-demo-buy-bar">
   .aamantran-demo-buy-wrap{
@@ -97,8 +102,8 @@ function injectDemoBuyBar(html, templateSlug, storefront) {
 })();
 </script>
 <div class="aamantran-demo-buy-wrap" role="navigation" aria-label="Purchase">
-  <a class="aamantran-btn-buy" href="${checkoutUrl}">Buy now</a>
-</div>`;
+  <a class="aamantran-btn-buy" href="${checkoutUrl}"${buyTarget}>Buy now</a>
+</div>${trialExtras}`;
 
   const lower = html.toLowerCase();
   const closeBody = lower.lastIndexOf('</body>');
@@ -117,11 +122,15 @@ function injectDemoBuyBar(html, templateSlug, storefront) {
  * of helmet's policy is preserved by rewriting just this one directive.
  */
 function allowLabFraming(res) {
+  setFrameAncestors(res, [siteUrls.labUrl()]);
+}
+
+/** Rewrites only helmet's frame-ancestors directive, keeping the rest of the policy. */
+function setFrameAncestors(res, origins) {
   const existing = res.getHeader('Content-Security-Policy');
   if (!existing) return;
 
-  const lab = siteUrls.labUrl();
-  const replacement = `frame-ancestors 'self' ${lab}`;
+  const replacement = ['frame-ancestors', "'self'", ...origins].join(' ');
   const directives = String(existing)
     .split(';')
     .map((d) => d.trim())
@@ -132,6 +141,153 @@ function allowLabFraming(res) {
   else directives[idx] = replacement;
 
   res.setHeader('Content-Security-Policy', directives.join('; '));
+}
+
+/** Origins of both storefront websites, which embed personal demos. */
+function landingOrigins() {
+  const origins = [siteUrls.landingUrl(), siteUrls.landingUrlIntl()]
+    .map((url) => { try { return new URL(url).origin; } catch { return null; } })
+    .filter(Boolean);
+  return [...new Set(origins)];
+}
+
+function escapeHtml(value) {
+  return String(value ?? '')
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
+
+/**
+ * Removes share-card and description tags a template declares.
+ *
+ * Templates commonly fill og:title with {{bride_name}} & {{groom_name}}. For a
+ * personal demo that would hand the visitor's names to WhatsApp's (or anyone's)
+ * link-preview scraper, which keeps its own copy long after our 24 hours are up.
+ * Generic tags are injected in their place.
+ */
+function stripShareMeta(html) {
+  return String(html).replace(
+    /<meta\b[^>]*\b(?:property|name)\s*=\s*["']?(?:og:[^"'\s>]*|twitter:[^"'\s>]*|description)(?=["'\s/>])[^>]*>/gi,
+    '',
+  );
+}
+
+/** The countdown, the ended overlay, and the RSVP/wish blocker for /try pages. */
+function trialDemoExtras({ remainingMs, createAgainUrl, checkoutUrl }) {
+  const remaining = Math.max(0, Math.floor(Number(remainingMs) || 0));
+  const seconds = Math.ceil(remaining / 1000);
+  const initial = `${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, '0')}`;
+  const font = 'system-ui,-apple-system,"Segoe UI",Roboto,sans-serif';
+  return `
+<style id="aamantran-trial-demo">
+  .aamantran-trial-pill{
+    position:fixed;top:max(10px,env(safe-area-inset-top));left:50%;transform:translateX(-50%);
+    z-index:2147483646;display:inline-flex;align-items:center;gap:6px;
+    padding:7px 14px;border-radius:999px;background:rgba(41,35,31,0.84);color:#fff;
+    font:600 13px/1.2 ${font};white-space:nowrap;pointer-events:none;
+    box-shadow:0 4px 14px rgba(0,0,0,0.15);
+  }
+  .aamantran-trial-pill time{font-variant-numeric:tabular-nums}
+  .aamantran-trial-toast{
+    position:fixed;left:50%;bottom:calc(76px + env(safe-area-inset-bottom));transform:translateX(-50%);
+    z-index:2147483647;width:max-content;max-width:min(92vw,420px);padding:12px 16px;border-radius:12px;
+    background:#29231F;color:#fff;font:500 14px/1.4 ${font};text-align:center;
+    box-shadow:0 8px 24px rgba(0,0,0,0.2);opacity:0;transition:opacity .2s;pointer-events:none;
+  }
+  .aamantran-trial-toast[data-show]{opacity:1}
+  .aamantran-trial-ended{
+    position:fixed;inset:0;z-index:2147483647;display:none;align-items:center;justify-content:center;
+    padding:24px;background:rgba(251,247,240,0.96);font-family:${font};color:#29231F;
+  }
+  html.aamantran-trial-over .aamantran-trial-ended{display:flex}
+  .aamantran-trial-ended div{max-width:380px;text-align:center}
+  .aamantran-trial-ended h2{margin:0 0 8px;font-size:22px;font-weight:600}
+  .aamantran-trial-ended p{margin:0 0 20px;font-size:15px;line-height:1.5;color:#6B625B}
+  .aamantran-trial-ended a{
+    display:flex;align-items:center;justify-content:center;min-height:44px;margin-top:10px;
+    border-radius:999px;font-weight:600;font-size:15px;text-decoration:none;
+  }
+  .aamantran-trial-ended a.primary{background:#712F41;color:#fff}
+  .aamantran-trial-ended a.secondary{border:1px solid #712F41;color:#712F41}
+  @media (prefers-reduced-motion: reduce){.aamantran-trial-toast{transition:none}}
+</style>
+<div class="aamantran-trial-pill" aria-hidden="true">Your demo · expires in <time id="aamantran-trial-time">${initial}</time></div>
+<div class="aamantran-trial-toast" id="aamantran-trial-toast" role="status" aria-live="polite"></div>
+<div class="aamantran-trial-ended" role="dialog" aria-modal="true" aria-labelledby="aamantran-trial-ended-title">
+  <div>
+    <h2 id="aamantran-trial-ended-title">This demo has ended</h2>
+    <p>Demo links work for ${LINK_MINUTES} minutes, so the names you typed don’t stay on a page anyone can open.</p>
+    <a class="primary" href="${escapeHtml(createAgainUrl)}" target="_top">Create a new demo</a>
+    <a class="secondary" href="${escapeHtml(checkoutUrl)}" target="_top">Buy this invitation</a>
+  </div>
+</div>
+<script>
+(function(){
+  var end=Date.now()+${remaining};
+  var out=document.getElementById('aamantran-trial-time');
+  var timer;
+  function tick(){
+    var left=Math.max(0,end-Date.now());
+    var s=Math.ceil(left/1000);
+    if(out)out.textContent=Math.floor(s/60)+':'+('0'+(s%60)).slice(-2);
+    if(left<=0){document.documentElement.classList.add('aamantran-trial-over');clearInterval(timer);}
+  }
+  tick();timer=setInterval(tick,1000);
+  // No SDK is injected, so a template's RSVP or wish form would otherwise fall
+  // back to a native submit. Capture phase: runs before any handler on the form.
+  var toast=document.getElementById('aamantran-trial-toast');var hide;
+  document.addEventListener('submit',function(e){
+    e.preventDefault();e.stopImmediatePropagation();
+    if(!toast)return;
+    toast.textContent='RSVPs and wishes work on your real invitation. Nothing was sent.';
+    toast.setAttribute('data-show','');
+    clearTimeout(hide);hide=setTimeout(function(){toast.removeAttribute('data-show');},4000);
+  },true);
+})();
+</script>`;
+}
+
+/** The page for a demo that has ended, never existed, or could not be shown. */
+function renderTrialEndedPage({ title, message, createAgainUrl, checkoutUrl }) {
+  const buy = checkoutUrl
+    ? `<a class="secondary" href="${escapeHtml(checkoutUrl)}" target="_top">Buy this invitation</a>`
+    : '';
+  return `<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex, nofollow, noarchive">
+<title>${escapeHtml(title)} — Aamantran</title>
+<style>
+  *{box-sizing:border-box}
+  body{margin:0;min-height:100vh;display:flex;align-items:center;justify-content:center;padding:24px 16px;
+    background:#FBF7F0;color:#29231F;font-family:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif}
+  main{width:100%;max-width:420px;text-align:center}
+  .brand{margin:0 0 28px;font-size:14px;font-weight:600;letter-spacing:.08em;text-transform:uppercase;color:#712F41}
+  h1{margin:0 0 10px;font-size:26px;font-weight:600;line-height:1.25}
+  p{margin:0 0 24px;font-size:16px;line-height:1.55;color:#6B625B}
+  a{display:flex;align-items:center;justify-content:center;min-height:48px;margin-top:10px;border-radius:999px;
+    font-weight:600;font-size:16px;text-decoration:none}
+  a:focus-visible{outline:3px solid #B08D57;outline-offset:3px}
+  .primary{background:#712F41;color:#fff}
+  .primary:hover{background:#572333}
+  .secondary{border:1px solid #712F41;color:#712F41;background:#fff}
+</style>
+</head>
+<body>
+<main>
+  <p class="brand">Aamantran</p>
+  <h1>${escapeHtml(title)}</h1>
+  <p>${escapeHtml(message)}</p>
+  <a class="primary" href="${escapeHtml(createAgainUrl)}" target="_top">Create a new demo</a>
+  ${buy}
+</main>
+</body>
+</html>`;
 }
 
 function detectVariant(req) {
@@ -188,6 +344,101 @@ router.get('/demo/:slug', async (req, res) => {
   setNoCacheHeaders(res);
   res.setHeader('Content-Type', 'text/html; charset=utf-8');
   res.send(injectDemoBuyBar(html, template.slug, storefrontFromRequest(req)));
+});
+
+// GET /try/:token — a visitor's personal demo ("try it with your names")
+//
+// The design's demo data with the visitor's names, date, venue and ceremonies
+// laid over it, watermarked, for LINK_MINUTES. Deliberately separate from
+// /i/:slug: nothing here reads or writes an event, and no SDK is injected, so an
+// RSVP or wish typed into a demo goes nowhere.
+router.get('/try/:token', async (req, res) => {
+  const token = String(req.params.token || '');
+  // Every response, including the ended page, is personal or was: never cached,
+  // never indexed, and the token never leaks onward in a Referer header. Both
+  // storefronts may frame it; nobody else may.
+  setNoCacheHeaders(res);
+  res.setHeader('X-Robots-Tag', 'noindex, nofollow, noarchive');
+  res.setHeader('Referrer-Policy', 'no-referrer');
+  setFrameAncestors(res, landingOrigins());
+  res.setHeader('Content-Type', 'text/html; charset=utf-8');
+
+  let createAgainUrl = `${landingUrlFor(storefrontFromRequest(req))}/templates`;
+  try {
+    const now = new Date();
+    const { status, trial } = await findTrialForRender(token, now);
+
+    // The storefront the demo was created on wins over the query string: the
+    // link is forwarded, and the person it reaches must see the same currency.
+    const storefront = trial?.payload?.storefront
+      ? normalizeStorefront(trial.payload.storefront)
+      : storefrontFromRequest(req);
+    const landing = landingUrlFor(storefront);
+    const template = trial?.template;
+    const buyable = Boolean(template && template.isActive && !template.sandboxOwnerId);
+    const slugPath = buyable ? encodeURIComponent(template.slug) : '';
+    // The link lasts minutes, the details a day: Buy keeps carrying the token
+    // for as long as the details exist to prefill the builder with.
+    const detailsKept = Boolean(trial) && new Date(trial.dataExpiresAt) > now;
+    const checkoutUrl = buyable
+      ? `${landing}/checkout/${slugPath}${detailsKept ? `?trial=${token}` : ''}`
+      : '';
+    createAgainUrl = buyable ? `${landing}/templates/${slugPath}?try=1` : `${landing}/templates`;
+
+    if (status !== 'live') {
+      return res.status(status === 'expired' ? 410 : 404).send(renderTrialEndedPage({
+        title: 'This demo has ended',
+        message: `Demo links work for ${LINK_MINUTES} minutes, so the names you typed don’t stay on a page anyone can open. It only takes a minute to make another.`,
+        createAgainUrl,
+        checkoutUrl,
+      }));
+    }
+
+    const demo = overlayTrialOnDemoData(template.demoData, trial.payload);
+    const data = buildDemoData(demo);
+    const variant = detectVariant(req);
+    // Render what a buyer would get — the published version — rather than the
+    // draft /demo shows admins. Draft only for a design published before
+    // versioning, the same fallback live invitations use.
+    const source = template.currentVersion
+      ? {
+          folderPath:       template.currentVersion.folderPath,
+          desktopEntryFile: template.currentVersion.desktopEntryFile,
+          mobileEntryFile:  template.currentVersion.mobileEntryFile,
+        }
+      : {
+          folderPath:       `${template.folderPath}/draft`,
+          desktopEntryFile: template.desktopEntryFile,
+          mobileEntryFile:  template.mobileEntryFile,
+        };
+    let html = await renderTemplate(source.folderPath, data, {
+      variant,
+      preferredFile: variant === 'mobile' ? source.mobileEntryFile : source.desktopEntryFile,
+      desktopEntryFile: source.desktopEntryFile,
+      mobileEntryFile:  source.mobileEntryFile,
+    });
+    html = injectSocialMeta(stripShareMeta(html), {
+      title: 'A wedding invitation preview',
+      description: `Made with Aamantran. Preview links expire after ${LINK_MINUTES} minutes.`,
+    });
+
+    prisma.trialDemo.update({ where: { id: trial.id }, data: { viewCount: { increment: 1 } } }).catch(() => {});
+
+    const remainingMs = new Date(trial.linkExpiresAt).getTime() - now.getTime();
+    return res.send(injectDemoBuyBar(html, template.slug, storefront, {
+      checkoutUrl,
+      trial: { remainingMs, createAgainUrl },
+    }));
+  } catch (error) {
+    // Express 4 does not catch a rejected handler; answer rather than hang.
+    console.error('[trial-demo] render failed:', error.message);
+    return res.status(500).send(renderTrialEndedPage({
+      title: 'We couldn’t load this demo',
+      message: 'Something went wrong on our side. Please try making the demo again.',
+      createAgainUrl,
+      checkoutUrl: '',
+    }));
+  }
 });
 
 // GET /i/:slug — serve couple's live invitation (public)
