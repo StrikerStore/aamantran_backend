@@ -10,6 +10,13 @@ const {
 const { parseHighlights, excerptWords } = require('../utils/templateMarketing');
 const { getTemplateCapabilities } = require('../services/templateCapabilities.service');
 const { canTryTemplate, TRY_ELIGIBILITY_SELECT } = require('../services/trialDemo.service');
+const { getPopularitySignals, rankByPopularity } = require('../services/popularity.service');
+
+// "Popular" is ranked in memory, because its score comes from two places the
+// database cannot ORDER BY together. That means reading the whole filtered set,
+// so it is capped: beyond this many matching designs the ordering falls back to
+// lifetime sales, which SQL can do. The catalogue is nowhere near this.
+const POPULAR_RANK_MAX = 500;
 
 /**
  * "Try it with your names" eligibility by template id.
@@ -106,6 +113,8 @@ router.get('/', async (req, res) => {
     ...(Object.keys(priceWhere).length && { price: priceWhere }),
   };
 
+  // The fallback order for 'popular', and what a catalogue too large to rank in
+  // memory gets. Also what a fresh deployment with no analytics yet sees.
   const orderBy =
     sort === 'popular'    ? { buyerCount: 'desc' } :
     sort === 'new'        ? { releasedAt: 'desc' } :
@@ -113,11 +122,14 @@ router.get('/', async (req, res) => {
     sort === 'price-desc' ? { price: 'desc' } :
     { buyerCount: 'desc' };
 
+  // Ranking by popularity has to see every matching design before it can pick a
+  // page, so the page is taken after sorting rather than by the database.
+  const rankInMemory = sort === 'popular';
+
   const [templates, total] = await Promise.all([
     prisma.template.findMany({
       where,
-      skip,
-      take:    Number(limit),
+      ...(rankInMemory ? { take: POPULAR_RANK_MAX } : { skip, take: Number(limit) }),
       orderBy,
       select: {
         id: true, slug: true, name: true,
@@ -132,19 +144,28 @@ router.get('/', async (req, res) => {
     prisma.template.count({ where }),
   ]);
 
+  let ordered = templates;
+  if (rankInMemory && templates.length < POPULAR_RANK_MAX) {
+    const signals = await getPopularitySignals();
+    // An empty ranking means no activity has been recorded yet; leaving the
+    // buyerCount order alone is then both correct and stable.
+    if (!signals.isEmpty) ordered = rankByPopularity(templates, signals);
+  }
+  const pageRows = rankInMemory ? ordered.slice(skip, skip + Number(limit)) : ordered;
+
   // Both currencies go out on every row, and the deployment picks. One cached
   // response is then correct for either storefront, which is what keeps the
   // catalogue statically cacheable now that there are two of them.
   const [settings, tryable] = await Promise.all([
     getPricingSettings(),
-    loadTryWithNames(templates.map((t) => t.id)),
+    loadTryWithNames(pageRows.map((t) => t.id)),
   ]);
 
   res.json({
     // highlights is stored comma-separated like bestFor; the storefront wants chips.
     // aboutText goes out only as a short excerpt: gallery cards need a sentence
     // for templates with no shortDescription, and nothing lists the full prose.
-    templates: templates.map(({ aboutText, ...t }) => withUsdPrices(
+    templates: pageRows.map(({ aboutText, ...t }) => withUsdPrices(
       {
         ...t,
         highlights: parseHighlights(t.highlights),
