@@ -44,6 +44,20 @@ function injectDemoBuyBar(html, templateSlug, storefront, options = {}) {
   // A personal demo is usually framed by the website, so Buy must leave the
   // frame. With no options this function's output is unchanged for /demo.
   const buyTarget = options.trial ? ' target="_top"' : '';
+  // On a personal demo the button explains itself: the watermark is the reason
+  // to buy, and the details typed into the demo carry into the purchase
+  // (applyTrialPrefill), so both halves of the sentence are true.
+  const buyLabel = options.trial ? 'Buy this design' : 'Buy now';
+  const buyNote = options.trial
+    ? `<style id="aamantran-demo-buy-note">
+  .aamantran-demo-buy-wrap{flex-direction:column;gap:8px}
+  .aamantran-demo-buy-note{
+    pointer-events:auto;margin:0;max-width:min(92vw,420px);padding:8px 14px;border-radius:12px;
+    background:rgba(41,35,31,0.86);color:#fff;font-size:13px;font-weight:500;line-height:1.4;text-align:center;
+    box-shadow:0 4px 14px rgba(0,0,0,0.12);
+  }
+</style><p class="aamantran-demo-buy-note">Buy to keep the details you entered and remove the watermark.</p>`
+    : '';
   const trialExtras = options.trial ? trialDemoExtras({ ...options.trial, checkoutUrl }) : '';
   const bar = `
 <style id="aamantran-demo-buy-bar">
@@ -102,7 +116,7 @@ function injectDemoBuyBar(html, templateSlug, storefront, options = {}) {
 })();
 </script>
 <div class="aamantran-demo-buy-wrap" role="navigation" aria-label="Purchase">
-  <a class="aamantran-btn-buy" href="${checkoutUrl}"${buyTarget}>Buy now</a>
+  ${buyNote}<a class="aamantran-btn-buy" href="${checkoutUrl}"${buyTarget}>${buyLabel}</a>
 </div>${trialExtras}`;
 
   const lower = html.toLowerCase();
@@ -192,7 +206,7 @@ function trialDemoExtras({ remainingMs, createAgainUrl, checkoutUrl }) {
   }
   .aamantran-trial-pill time{font-variant-numeric:tabular-nums}
   .aamantran-trial-toast{
-    position:fixed;left:50%;bottom:calc(76px + env(safe-area-inset-bottom));transform:translateX(-50%);
+    position:fixed;left:50%;bottom:calc(132px + env(safe-area-inset-bottom));transform:translateX(-50%);
     z-index:2147483647;width:max-content;max-width:min(92vw,420px);padding:12px 16px;border-radius:12px;
     background:#29231F;color:#fff;font:500 14px/1.4 ${font};text-align:center;
     box-shadow:0 8px 24px rgba(0,0,0,0.2);opacity:0;transition:opacity .2s;pointer-events:none;
@@ -418,7 +432,7 @@ router.get('/try/:token', async (req, res) => {
       mobileEntryFile:  source.mobileEntryFile,
     });
     html = injectSocialMeta(stripShareMeta(html), {
-      title: 'A wedding invitation preview',
+      title: 'An invitation preview',
       description: `Made with Aamantran. Preview links expire after ${LINK_MINUTES} minutes.`,
     });
 

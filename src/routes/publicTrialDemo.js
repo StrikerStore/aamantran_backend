@@ -2,21 +2,26 @@
  * Public API for "try it with your names".
  *
  * No account, no payment, no contact details: the visitor sends the names,
- * date, venue and ceremonies they want to see, and gets back a link that works
- * for a few minutes. Deliberately the only public endpoint that writes personal
+ * date, venue and events they want to see, and gets back a link that works
+ * for a few minutes. What they may send is decided per design — see
+ * trialOptionsFor — so the same form serves a wedding, a birthday or a
+ * housewarming. Deliberately the only public endpoint that writes personal
  * data without a login, so it is rate-limited twice (requests per hour by the
  * limiter, demos per hour and per day inside the service) and validates every
  * field rather than trimming it into shape.
  */
 const express = require('express');
-const { trialDemoLimiter } = require('../middleware/rateLimits');
+const prisma = require('../utils/prisma');
+const { trialDemoLimiter, publicInviteLimiter } = require('../middleware/rateLimits');
+const { EXCLUDE_SANDBOX_TEMPLATE } = require('../utils/testFilters');
 const { storefrontFromRequest } = require('../utils/storefront');
 const {
   TrialDemoError,
-  TRIAL_CEREMONIES,
+  WEDDING_CEREMONIES,
   LINK_MINUTES,
+  TRY_ELIGIBILITY_SELECT,
   createTrialDemo,
-  validateTrialPayload,
+  trialOptionsFor,
 } = require('../services/trialDemo.service');
 
 const router = express.Router();
@@ -26,20 +31,38 @@ function callerIp(req) {
   return req.ip || req.socket?.remoteAddress || null;
 }
 
-// GET /api/trial-demo/options — what the form may offer.
-// Lets the storefront render the ceremony choices without hard-coding a list
-// that must then be kept in step with the validator.
-router.get('/options', (_req, res) => {
-  res.json({ ceremonies: TRIAL_CEREMONIES, expiresInMinutes: LINK_MINUTES });
+// GET /api/trial-demo/options?slug=… — what the form may ask for this design.
+// { people: [{ role, label, required }], ceremonies: [name], dateLabel,
+//   expiresInMinutes }. Comes from the same function the validator uses, so the
+// form can never offer something the server then refuses.
+//
+// Without a slug it answers in the old shape — the wedding ceremonies — so a
+// browser still running the previous form keeps working through a deploy.
+router.get('/options', publicInviteLimiter, async (req, res) => {
+  const slug = String(req.query.slug || '').trim();
+  if (!slug) return res.json({ ceremonies: WEDDING_CEREMONIES, expiresInMinutes: LINK_MINUTES });
+  try {
+    const template = await prisma.template.findFirst({
+      where: { slug, isActive: true, ...EXCLUDE_SANDBOX_TEMPLATE },
+      select: { id: true, ...TRY_ELIGIBILITY_SELECT },
+    });
+    const options = trialOptionsFor(template);
+    if (!options) return res.status(404).json({ message: 'That design cannot be previewed yet.' });
+    res.set('Cache-Control', 'public, max-age=60');
+    return res.json({ ...options, expiresInMinutes: LINK_MINUTES });
+  } catch (error) {
+    console.error('[trial-demo] options failed:', error.message);
+    return res.status(500).json({ message: 'Could not load the demo form. Please try again.' });
+  }
 });
 
 // POST /api/trial-demo — create a personal demo of one design.
 router.post('/', trialDemoLimiter, async (req, res) => {
   try {
-    const payload = validateTrialPayload(req.body);
+    // Validated inside, against the design being asked for.
     const demo = await createTrialDemo({
       slug: req.body?.slug,
-      payload,
+      body: req.body,
       ip: callerIp(req),
       storefront: storefrontFromRequest(req),
     });

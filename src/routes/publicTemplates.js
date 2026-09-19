@@ -9,7 +9,7 @@ const {
 } = require('../utils/reviewAggregates');
 const { parseHighlights, excerptWords } = require('../utils/templateMarketing');
 const { getTemplateCapabilities } = require('../services/templateCapabilities.service');
-const { canTryWithNames, TRY_ELIGIBILITY_SELECT } = require('../services/trialDemo.service');
+const { canTryTemplate, TRY_ELIGIBILITY_SELECT } = require('../services/trialDemo.service');
 
 /**
  * "Try it with your names" eligibility by template id.
@@ -26,7 +26,7 @@ async function loadTryWithNames(ids) {
       where:  { id: { in: ids } },
       select: { id: true, ...TRY_ELIGIBILITY_SELECT },
     });
-    return new Map(rows.map((row) => [row.id, canTryWithNames(row)]));
+    return new Map(rows.map((row) => [row.id, canTryTemplate(row)]));
   } catch {
     return new Map();
   }
