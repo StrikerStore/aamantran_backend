@@ -93,8 +93,12 @@ function mailtoLink(email) {
 /** Team alert: a template was purchased. */
 function adminOrderPlacedHtml({
   orderId, templateName, amount, currency, storefront, discountAmount, couponCode,
-  customerEmail, paymentId, mihpayid, purchasedAt, adminUrl,
+  customerEmail, paymentId, mihpayid, gateway, gatewayRef, purchasedAt, adminUrl,
 }) {
+  // `mihpayid` is the old name for the same thing, kept so an older caller (or a
+  // queued mail) still renders the reference instead of a dash.
+  const ref = gatewayRef || mihpayid;
+  const gatewayName = String(gateway || '').toLowerCase() === 'razorpay' ? 'Razorpay' : 'PayU';
   const discount = Number(discountAmount || 0);
   const cur = currency || 'INR';
   const rows = [
@@ -110,7 +114,7 @@ function adminOrderPlacedHtml({
         )
       : '',
     internalRow('Customer', customerEmail ? mailtoLink(customerEmail) : '—'),
-    internalRow('PayU ref', `<span style="font-family:monospace;">${esc(mihpayid || '—')}</span>`),
+    internalRow(`${gatewayName} ref`, `<span style="font-family:monospace;">${esc(ref || '—')}</span>`),
     internalRow('Payment ID', `<span style="font-family:monospace;font-size:12px;">${esc(paymentId)}</span>`),
     internalRow('Placed at', esc(purchasedAt)),
   ].filter(Boolean).join('');

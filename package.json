@@ -43,6 +43,7 @@
     "node-cron": "^4.2.1",
     "nodemailer": "^7.0.5",
     "prisma": "^5.14.0",
+    "razorpay": "^2.9.8",
     "terser": "^5.46.1",
     "unzipper": "^0.12.3",
     "uuid": "^10.0.0"

@@ -15,6 +15,7 @@ const {
   invalidatePricingSettings,
   deriveUsdCents,
 } = require('../services/pricing.service');
+const { getGatewayStatus, setGatewayFor } = require('../services/paymentGateway.service');
 
 // Guard rails, not policy. Wide enough that a legitimate rate never trips them,
 // narrow enough that a typo -- a rate of 9 instead of 96, or a fat-fingered
@@ -143,4 +144,35 @@ async function previewPricing(req, res) {
   });
 }
 
-module.exports = { getPricing, updatePricing, previewPricing };
+/**
+ * GET /api/v1/settings/gateway
+ *
+ * Which gateway each storefront pays through, and which it could. Includes the
+ * gateways that are NOT selectable and why, because "PayU is greyed out for the
+ * global site" is only useful next to "set PAYU_INTL_MERCHANT_KEY".
+ */
+async function getGateway(req, res) {
+  const data = await getGatewayStatus();
+  return res.json({ ok: true, data });
+}
+
+/**
+ * PUT /api/v1/settings/gateway  { storefront, gateway }
+ *
+ * Refuses a gateway with no credentials for that storefront: saving it would
+ * make every subsequent order on that site fail with a 503.
+ */
+async function updateGateway(req, res) {
+  const { storefront, gateway } = req.body || {};
+  if (!storefront || !gateway) {
+    return res.status(400).json({ ok: false, message: 'storefront and gateway are required' });
+  }
+
+  const result = await setGatewayFor(storefront, gateway);
+  if (result.error) return res.status(400).json({ ok: false, message: result.error });
+
+  const data = await getGatewayStatus();
+  return res.json({ ok: true, data });
+}
+
+module.exports = { getPricing, updatePricing, previewPricing, getGateway, updateGateway };

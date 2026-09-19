@@ -1,142 +1,187 @@
-const Razorpay = require('razorpay');
-const siteUrls = require('../config/siteUrls');
+/**
+ * Razorpay, as a second gateway beside PayU.
+ *
+ * One account serves both storefronts: rupees for India, dollars for the global
+ * site (which needs "international payments" enabled in the Razorpay dashboard —
+ * nothing here can check that, so a USD order on an account without it fails at
+ * Razorpay with its own message).
+ *
+ * This file deliberately mirrors payu.service.js: isConfigured / assertConfigured
+ * / currencyFor / a create step / a signature check / refundPayment. The two are
+ * swapped by paymentGateway.service.js, which is the only place that decides
+ * which one an order uses.
+ *
+ * SECRETS. RAZORPAY_KEY_ID is public — it is handed to Checkout.js in the
+ * buyer's browser. RAZORPAY_KEY_SECRET and RAZORPAY_WEBHOOK_SECRET are not, and
+ * nothing in this module returns them: they only ever go into an HMAC or the
+ * SDK's own Basic auth header.
+ *
+ * WHY THE SIGNATURE CHECKS ARE HAND-ROLLED. The SDK ships equivalents, but these
+ * are four lines of crypto, they use timingSafeEqual, and they can be unit
+ * tested without the SDK or the network. The algorithms are Razorpay's
+ * documented ones:
+ *   checkout: HMAC-SHA256(order_id + "|" + payment_id, KEY_SECRET)
+ *   webhook:  HMAC-SHA256(raw request body, WEBHOOK_SECRET)
+ */
+const crypto = require('crypto');
+const { currencyFor: currencyForStorefront } = require('../utils/storefront');
 
-let _instance = null;
+let instance = null;
 
-function getRazorpay() {
-  if (!_instance) {
-    _instance = new Razorpay({
-      key_id:     process.env.RAZORPAY_KEY_ID,
-      key_secret: process.env.RAZORPAY_KEY_SECRET,
-    });
-  }
-  return _instance;
+function keyId() {
+  return (process.env.RAZORPAY_KEY_ID || '').trim();
+}
+
+function keySecret() {
+  return (process.env.RAZORPAY_KEY_SECRET || '').trim();
+}
+
+function webhookSecret() {
+  return (process.env.RAZORPAY_WEBHOOK_SECRET || '').trim();
 }
 
 /**
- * Create a Razorpay Payment Link for balance amount on template swap.
- * Returns { id, short_url } from Razorpay.
+ * True when the account is usable.
+ *
+ * Takes a storefront for symmetry with isPayuConfigured(storefront) so the
+ * resolver can ask both gateways the same question; the answer does not depend
+ * on it, because one Razorpay account serves both sites.
  */
-async function createPaymentLink({ amountPaise, description, customerName, customerEmail, customerPhone, notes = {} }) {
-  const rz = getRazorpay();
-  const link = await rz.paymentLink.create({
-    amount:      amountPaise,
-    currency:    'INR',
-    description,
-    customer: {
-      name:  customerName,
-      email: customerEmail,
-      contact: customerPhone || undefined,
-    },
-    notify: { email: true, sms: !!customerPhone },
-    reminder_enable: true,
+function isRazorpayConfigured(_storefront) {
+  return Boolean(keyId() && keySecret());
+}
+
+function assertRazorpayConfigured(storefront) {
+  if (isRazorpayConfigured(storefront)) return;
+  throw new Error('Razorpay is not configured: set RAZORPAY_KEY_ID / RAZORPAY_KEY_SECRET');
+}
+
+/** The currency to charge in for this storefront — the same rule PayU follows. */
+function currencyFor(storefront) {
+  return currencyForStorefront(storefront);
+}
+
+/** True when a webhook can be verified at all. Without the secret we refuse every call. */
+function isWebhookConfigured() {
+  return Boolean(webhookSecret());
+}
+
+/** Test or live is decided by the key itself: rzp_test_… vs rzp_live_…. */
+function isTestKey() {
+  return keyId().startsWith('rzp_test');
+}
+
+function client() {
+  if (!instance) {
+    // Required lazily so a deploy without the credentials still boots; the
+    // gateway resolver refuses such an order long before this runs.
+    const Razorpay = require('razorpay');
+    instance = new Razorpay({ key_id: keyId(), key_secret: keySecret() });
+  }
+  return instance;
+}
+
+/** Drops the memoised client. Only used by tests that swap the credentials. */
+function resetClient() {
+  instance = null;
+}
+
+/**
+ * Create the Razorpay order the browser will pay against.
+ *
+ * `amountMinor` is an integer in the minor units of `currency` — paise for INR,
+ * cents for USD — which is exactly how Payment.amount is stored, so no
+ * conversion happens anywhere in this path.
+ *
+ * `receipt` is our own order id, which is what makes a Razorpay dashboard row
+ * traceable back to a row in Payment.
+ *
+ * Throws on any Razorpay error. The caller creates the Payment row only after
+ * this resolves, so a gateway outage leaves no stranded `pending` order behind.
+ */
+async function createOrder({ amountMinor, currency, receipt, notes = {} }) {
+  assertRazorpayConfigured();
+  const amount = Number(amountMinor);
+  if (!Number.isInteger(amount) || amount <= 0) {
+    throw new Error('Razorpay order amount must be a positive integer in minor units');
+  }
+  const order = await client().orders.create({
+    amount,
+    currency: String(currency || 'INR').toUpperCase(),
+    // Razorpay caps this at 40 characters and rejects anything longer.
+    receipt: String(receipt || '').slice(0, 40),
     notes,
-    callback_url:    `${siteUrls.coupleDashboardUrl()}/payment/success`,
-    callback_method: 'get',
   });
-  return link;
+  return { id: order.id, amount: order.amount, currency: order.currency, status: order.status };
 }
 
-/**
- * Creates a real Razorpay payment link when keys are configured; otherwise returns a placeholder
- * (or env TEMPLATE_SWAP_PLACEHOLDER_PAY_URL) so admin flows never crash in local dev.
- * @returns {Promise<{ id: string, short_url: string, isPlaceholder: boolean }>}
- */
-async function createPaymentLinkOrPlaceholder({
-  amountPaise,
-  description,
-  customerName,
-  customerEmail,
-  customerPhone,
-  notes = {},
-}) {
-  const placeholderUrl =
-    (process.env.TEMPLATE_SWAP_PLACEHOLDER_PAY_URL || '').trim() ||
-    'https://rzp.io/i/configure-razorpay-for-template-upgrade';
-  const hasKeys = Boolean(process.env.RAZORPAY_KEY_ID && process.env.RAZORPAY_KEY_SECRET);
-
-  if (!hasKeys) {
-    return {
-      id:          `placeholder_${Date.now()}`,
-      short_url:   placeholderUrl,
-      isPlaceholder: true,
-    };
-  }
-
+/** Constant-time compare of two hex digests of the same length. */
+function sameHex(a, b) {
   try {
-    const link = await createPaymentLink({
-      amountPaise,
-      description,
-      customerName,
-      customerEmail,
-      customerPhone,
-      notes,
-    });
-    return { id: link.id, short_url: link.short_url, isPlaceholder: false };
-  } catch (err) {
-    console.error('[Razorpay] createPaymentLink failed, using placeholder URL:', err.message);
-    return {
-      id:          `placeholder_${Date.now()}`,
-      short_url:   placeholderUrl,
-      isPlaceholder: true,
-    };
-  }
-}
-
-/**
- * Create a Razorpay Order for frontend checkout.js flow.
- * Returns Razorpay order object with id, amount, currency, etc.
- */
-async function createOrder({ amountPaise, receipt, notes = {} }) {
-  const rz = getRazorpay();
-  return rz.orders.create({
-    amount: amountPaise,
-    currency: 'INR',
-    receipt: receipt || `aamantran_${Date.now()}`,
-    notes,
-  });
-}
-
-/**
- * Fetch a Razorpay payment by ID (for transaction detail).
- */
-async function fetchPayment(razorpayPaymentId) {
-  const rz = getRazorpay();
-  return rz.payments.fetch(razorpayPaymentId);
-}
-
-/**
- * Issue a full refund for a payment.
- */
-async function refundPayment(razorpayPaymentId, amountPaise) {
-  const rz = getRazorpay();
-  return rz.payments.refund(razorpayPaymentId, {
-    amount: amountPaise,
-    speed:  'normal',
-  });
-}
-
-/**
- * Verify Razorpay webhook signature.
- */
-function verifyWebhookSignature(body, signature) {
-  const crypto = require('crypto');
-  const secret = process.env.RAZORPAY_WEBHOOK_SECRET;
-  if (!secret || !signature || typeof signature !== 'string') return false;
-  const expected = crypto.createHmac('sha256', secret).update(body).digest('hex');
-  if (expected.length !== signature.length) return false;
-  try {
-    return crypto.timingSafeEqual(Buffer.from(expected, 'utf8'), Buffer.from(signature, 'utf8'));
+    const left = Buffer.from(String(a), 'hex');
+    const right = Buffer.from(String(b), 'hex');
+    if (left.length === 0 || left.length !== right.length) return false;
+    return crypto.timingSafeEqual(left, right);
   } catch {
     return false;
   }
 }
 
+/**
+ * Verify what Checkout.js hands back to the page.
+ *
+ * This is the whole security of the browser-side flow: the three fields arrive
+ * from the buyer's own browser and are worth nothing until this passes. A
+ * mismatch must leave the order unpaid.
+ */
+function verifyCheckoutSignature({ orderId, paymentId, signature }) {
+  if (!orderId || !paymentId || !signature) return false;
+  const secret = keySecret();
+  if (!secret) return false;
+  const expected = crypto
+    .createHmac('sha256', secret)
+    .update(`${orderId}|${paymentId}`)
+    .digest('hex');
+  return sameHex(expected, signature);
+}
+
+/**
+ * Verify a webhook, over the EXACT bytes Razorpay sent.
+ *
+ * `rawBody` must be the untouched request body — a Buffer or the original
+ * string. Anything that has been through JSON.parse and re-serialised will not
+ * match, which is why the webhook route mounts its own raw body parser.
+ */
+function verifyWebhookSignature(rawBody, signature) {
+  const secret = webhookSecret();
+  if (!secret || !signature || rawBody == null) return false;
+  const body = Buffer.isBuffer(rawBody) ? rawBody : Buffer.from(String(rawBody), 'utf8');
+  const expected = crypto.createHmac('sha256', secret).update(body).digest('hex');
+  return sameHex(expected, signature);
+}
+
+/**
+ * Refund a captured payment, in the currency it was taken in.
+ *
+ * `paymentId` is Razorpay's pay_… id (Payment.gatewayPaymentId), never the
+ * order id: an order can hold several payment attempts and only the captured
+ * one can be refunded.
+ */
+async function refundPayment(paymentId, amountMinor) {
+  assertRazorpayConfigured();
+  return client().payments.refund(String(paymentId), { amount: Number(amountMinor) });
+}
+
 module.exports = {
-  createPaymentLink,
-  createPaymentLinkOrPlaceholder,
+  keyId,
+  isRazorpayConfigured,
+  assertRazorpayConfigured,
+  isWebhookConfigured,
+  isTestKey,
+  currencyFor,
   createOrder,
-  fetchPayment,
-  refundPayment,
+  verifyCheckoutSignature,
   verifyWebhookSignature,
+  refundPayment,
+  resetClient,
 };

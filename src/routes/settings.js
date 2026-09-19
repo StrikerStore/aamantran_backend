@@ -9,4 +9,7 @@ router.get('/pricing',          controller.getPricing);
 router.put('/pricing',          controller.updatePricing);
 router.get('/pricing/preview',  controller.previewPricing);
 
+router.get('/gateway',          controller.getGateway);
+router.put('/gateway',          controller.updateGateway);
+
 module.exports = router;

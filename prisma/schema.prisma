@@ -478,8 +478,20 @@ model Payment {
   event             Event?   @relation(fields: [eventId], references: [id])
   templateId        String
   template          Template @relation(fields: [templateId], references: [id])
+  /// PayU's own ids. Still the lookup key on every PayU callback and IPN, because
+  /// that is what PayU sends back. NULL on a Razorpay order.
   payuTxnId         String?
   payuMihpayid      String?
+  /// Which gateway took this money: "payu" or "razorpay". Backfilled to "payu"
+  /// on every row that existed before Razorpay, so it is never unknown.
+  gateway           String   @default("payu")
+  /// The same two ids, named without a gateway in them, so the admin, the
+  /// refund path and the emails read one pair of columns whoever settled the
+  /// order. For PayU these MIRROR payuTxnId / payuMihpayid (written together,
+  /// never separately); for Razorpay they are order_id and payment_id and the
+  /// payu* columns stay NULL.
+  gatewayOrderId    String?
+  gatewayPaymentId  String?
   customerEmail     String?
   couponCode        String?
   discountAmount    Int?     @default(0)
@@ -522,6 +534,11 @@ model Payment {
 
   @@index([storefront, status])
   @@index([trialDemoId])
+  /// Every gateway callback, IPN and webhook looks a payment up by one of these.
+  /// They were unindexed full scans before Razorpay made the traffic worth it.
+  @@index([payuTxnId])
+  @@index([gatewayOrderId])
+  @@index([gateway, status])
 }
 
 /// "Try it with your names" — a personal, watermarked demo of a real template,

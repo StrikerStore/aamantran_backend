@@ -11,12 +11,15 @@ const {
   buildPaymentParams,
   verifyResponseHash,
   payuPaymentUrl,
-  isPayuConfigured,
 } = require('../services/payu.service');
+const razorpay = require('../services/razorpay.service');
+const { gatewayFor, PAYU, RAZORPAY } = require('../services/paymentGateway.service');
+// Every route that finishes a purchase goes through this one helper, so the
+// four ways a payment can complete cannot drift apart again.
+const { markPaymentPaid, markPaymentFailed } = require('../services/payment.service');
 const {
   sendPurchaseConfirmationEmail,
   sendOnboardingCompleteEmail,
-  sendAdminOrderPlacedEmail,
 } = require('../services/email.service');
 const siteUrls = require('../config/siteUrls');
 const { validateNewPassword } = require('../utils/authSecurity');
@@ -73,58 +76,6 @@ function inferEventTypeFromTemplate(template) {
   return first || 'wedding';
 }
 
-
-// ─── Helper: mark a payment as paid and fire purchase email ──────────────────
-
-async function markPaymentPaid(payment, mihpayid) {
-  const [updated] = await prisma.$transaction([
-    prisma.payment.update({
-      where: { id: payment.id },
-      data: { status: 'paid', payuMihpayid: mihpayid || null },
-      include: { template: { select: { name: true, slug: true } } },
-    }),
-    prisma.template.update({
-      where: { id: payment.templateId },
-      data:  { buyerCount: { increment: 1 } },
-    }),
-  ]);
-
-  if (updated.customerEmail) {
-    // Back to the site they actually bought from. This used to be hardcoded to
-    // the India landing URL, so an international buyer was emailed a link to the
-    // wrong storefront.
-    const landing = landingUrlFor(updated.storefront);
-    const onboardingUrl = `${landing}/onboarding?paymentId=${encodeURIComponent(updated.id)}&slug=${encodeURIComponent(updated.template.slug)}&template=${encodeURIComponent(updated.template.name)}${updated.orderId ? `&orderId=${encodeURIComponent(updated.orderId)}` : ''}&amount=${updated.amount}&currency=${encodeURIComponent(updated.currency || 'INR')}`;
-    sendPurchaseConfirmationEmail({
-      to: updated.customerEmail,
-      templateName: updated.template.name,
-      amount: updated.amount,
-      currency: updated.currency,
-      orderId: updated.orderId || null,
-      onboardingUrl,
-    }).catch(err => console.error('[Email Error]', err.message));
-  }
-
-  // Team notification. Fired regardless of whether the buyer left an email, and
-  // never awaited: a mail failure must not roll back a payment that PayU has
-  // already taken.
-  sendAdminOrderPlacedEmail({
-    orderId:        updated.orderId,
-    templateName:   updated.template.name,
-    amount:         updated.amount,
-    currency:       updated.currency,
-    storefront:     updated.storefront,
-    discountAmount: updated.discountAmount,
-    couponCode:     updated.couponCode,
-    customerEmail:  updated.customerEmail,
-    paymentId:      updated.id,
-    mihpayid:       updated.payuMihpayid,
-    purchasedAt:    new Date().toLocaleString('en-IN', { dateStyle: 'medium', timeStyle: 'short' }),
-    adminUrl:       `${siteUrls.adminUrl()}/transactions/${updated.id}`,
-  }).catch(err => console.error('[Email Error]', err.message));
-
-  return updated;
-}
 
 // GET /api/checkout/coupons?templateSlug=...&customerEmail=...
 //
@@ -231,18 +182,25 @@ router.post('/order', async (req, res) => {
     // treatment.
     const storefront = resolveStorefrontForOrder(req);
 
+    // Which gateway takes this order: PayU or Razorpay, per storefront, as the
+    // admin has it set. Resolved on every order and re-checked against the
+    // credentials actually present, so a setting saved before a key was removed
+    // is refused here rather than failing at the gateway -- and is never
+    // silently rerouted to the other gateway, which would settle the money into
+    // an account nobody chose.
+    const chosen = await gatewayFor(storefront);
+
     // Refuse before writing anything.
     //
-    // buildPaymentParams asserts the same thing further down, but by then the
-    // Payment row exists -- so a storefront whose merchant account is not
-    // configured used to leave a stranded `pending` order behind on every
-    // attempt, and the customer got the generic "Failed to create checkout
-    // order". Nothing should reach the database until the request is known to
-    // be fulfillable.
+    // The gateway asserts the same thing further down, but by then the Payment
+    // row exists -- so an unconfigured storefront used to leave a stranded
+    // `pending` order behind on every attempt, and the customer got the generic
+    // "Failed to create checkout order". Nothing should reach the database until
+    // the request is known to be fulfillable.
     //
-    // Skipped in DUMMY_PAYMENT_MODE, which returns before PayU is ever called.
-    if (!DUMMY_PAYMENT_MODE && !isPayuConfigured(storefront)) {
-      console.error(`[checkout] PayU is not configured for storefront ${storefront}; refusing order`);
+    // Skipped in DUMMY_PAYMENT_MODE, which returns before any gateway is called.
+    if (!DUMMY_PAYMENT_MODE && !chosen.configured) {
+      console.error(`[checkout] ${chosen.gateway} is not configured for storefront ${storefront} (needs ${chosen.missing}); refusing order`);
       return res.status(503).json({
         message: 'Payments are temporarily unavailable for your region. Please contact support.',
       });
@@ -262,11 +220,35 @@ router.post('/order', async (req, res) => {
     // Ignored, never refused, when it is for another design or has expired.
     const trialDemoId = await trialIdForOrder(trialToken, template.id).catch(() => null);
 
+    // Razorpay's order is created BEFORE our row, deliberately: the browser
+    // cannot open the payment sheet without it, so a gateway outage should leave
+    // no `pending` row behind at all. The reverse order would.
+    let razorpayOrder = null;
+    if (!DUMMY_PAYMENT_MODE && chosen.gateway === RAZORPAY) {
+      try {
+        razorpayOrder = await razorpay.createOrder({
+          amountMinor: finalAmount,
+          currency:    breakup.currency,
+          // Our own order id, so a Razorpay dashboard row is traceable to a Payment.
+          receipt:     orderId,
+          notes:       { templateSlug: template.slug, storefront },
+        });
+      } catch (err) {
+        console.error('[checkout] Razorpay order creation failed:', err?.error?.description || err.message);
+        return res.status(502).json({ message: 'Payments are temporarily unavailable. Please try again in a moment.' });
+      }
+    }
+
     const payment = await prisma.payment.create({
       data: {
         templateId:    template.id,
         orderId,
-        payuTxnId:     txnid,
+        // PayU is looked up by its own txnid on every callback and IPN; Razorpay
+        // by its order id. The generic column mirrors whichever applies.
+        ...(razorpayOrder
+          ? { gatewayOrderId: razorpayOrder.id }
+          : { payuTxnId: txnid, gatewayOrderId: txnid }),
+        gateway:       chosen.gateway,
         customerEmail: customerEmail ? String(customerEmail).trim().toLowerCase() : null,
         couponCode:    coupon.discountPct > 0 ? coupon.code : null,
         discountAmount,
@@ -303,6 +285,33 @@ router.post('/order', async (req, res) => {
 
     const apiBase   = siteUrls.apiBaseUrl();
     const firstname = String(customerEmail || '').split('@')[0].replace(/[^a-zA-Z0-9 _-]/g, '').slice(0, 30) || 'Customer';
+
+    // Razorpay: everything the browser needs to open Checkout.js, and nothing
+    // more. keyId is the publishable key; RAZORPAY_KEY_SECRET never leaves this
+    // process. The payment is not trusted until /razorpay-verify checks the
+    // signature server-side.
+    if (razorpayOrder) {
+      return res.json({
+        razorpay: {
+          keyId:       razorpay.keyId(),
+          orderId:     razorpayOrder.id,
+          amount:      razorpayOrder.amount,
+          currency:    razorpayOrder.currency,
+          name:        'Aamantran',
+          description: template.name,
+          prefill: {
+            name:    firstname,
+            email:   customerEmail ? String(customerEmail).trim().toLowerCase() : '',
+            contact: normalizePhoneForGateway(customerContactCountryCode, customerContact),
+          },
+        },
+        paymentId:  payment.id,
+        orderId:    payment.orderId,
+        amount:     finalAmount,
+        priceBreakup: { baseAmount: breakup.baseAmount, discountAmount, gstPercent, gstAmount, finalAmount, discountPct, currency: breakup.currency },
+      });
+    }
+
     const payuParams = buildPaymentParams({
       txnid,
       amountMinor:  finalAmount,
@@ -328,6 +337,63 @@ router.post('/order', async (req, res) => {
     });
   } catch {
     return res.status(500).json({ message: 'Failed to create checkout order' });
+  }
+});
+
+// POST /api/checkout/razorpay-verify
+//
+// Razorpay's Checkout.js is a modal, not a redirect: when it closes it hands the
+// PAGE three fields and the page sends them here. They arrive from the buyer's
+// own browser and are worth nothing on their own -- this signature check, with
+// the secret that never leaves the server, is the entire security of the flow.
+// A mismatch leaves the order exactly as it was: unpaid.
+//
+// This is not the only path to `paid`. Razorpay's webhook does the same job for
+// a buyer who closes the tab before the page can call this, and whichever
+// arrives first wins (see markPaymentPaid).
+router.post('/razorpay-verify', async (req, res) => {
+  const body = req.body || {};
+  const orderRef   = String(body.razorpay_order_id   || '');
+  const paymentRef = String(body.razorpay_payment_id || '');
+  const signature  = String(body.razorpay_signature  || '');
+
+  if (!orderRef || !paymentRef || !signature) {
+    return res.status(400).json({ message: 'Incomplete payment confirmation' });
+  }
+
+  if (!razorpay.verifyCheckoutSignature({ orderId: orderRef, paymentId: paymentRef, signature })) {
+    console.error('[checkout] Razorpay signature mismatch for order', orderRef.slice(0, 40));
+    return res.status(400).json({
+      message: 'We could not verify this payment. If your account has been charged, contact support with your order id.',
+    });
+  }
+
+  try {
+    const payment = await prisma.payment.findFirst({
+      where:   { gatewayOrderId: orderRef, gateway: RAZORPAY },
+      include: { template: { select: { name: true, slug: true } } },
+    });
+    if (!payment) return res.status(404).json({ message: 'Order not found' });
+
+    const updated = payment.status === 'paid' ? payment : await markPaymentPaid(payment, paymentRef);
+
+    return res.json({
+      ok:           true,
+      paymentId:    updated.id,
+      orderId:      updated.orderId,
+      templateSlug: updated.template.slug,
+      templateName: updated.template.name,
+      amount:       updated.amount,
+      currency:     updated.currency,
+    });
+  } catch (err) {
+    console.error('[checkout] razorpay-verify failed:', err.message);
+    // The signature was good, so the money is real even though this failed. The
+    // webhook is the backstop, and the buyer is told to wait rather than to pay
+    // again.
+    return res.status(500).json({
+      message: 'Your payment went through but we could not finish setting up your order. Give it a minute, then check your email — or contact support with your order id.',
+    });
   }
 });
 
@@ -437,10 +503,7 @@ router.post('/payu-failure', async (req, res) => {
       if (failed && failed.storefront) storefront = failed.storefront;
       if (failed && failed.template) templateSlug = failed.template.slug;
 
-      await prisma.payment.updateMany({
-        where: { payuTxnId: txnid, status: 'pending' },
-        data:  { status: 'failed' },
-      });
+      await markPaymentFailed({ payuTxnId: String(txnid) });
     }
   } catch {
     // best-effort
@@ -598,8 +661,13 @@ router.post('/payu-swap-success', async (req, res) => {
           userId:      swap.userId,
           eventId:     swap.eventId,
           templateId:  swap.toTemplateId,
+          // Template upgrades stay on the India PayU account (see payu-swap-link),
+          // whatever the storefront gateway setting says.
+          gateway:     PAYU,
           payuTxnId:   txnid,
           payuMihpayid: mihpayid,
+          gatewayOrderId:   txnid,
+          gatewayPaymentId: mihpayid,
           amount:      swap.balanceAmount,
           status:      'paid',
         },
@@ -633,12 +701,23 @@ router.post('/mock-success', async (req, res) => {
     const { paymentId } = req.body || {};
     if (!paymentId) return res.status(400).json({ message: 'paymentId is required' });
 
+    const existing = await prisma.payment.findUnique({
+      where:  { id: paymentId },
+      select: { gateway: true },
+    });
+    // A test order records the gateway that would really have taken it, so the
+    // mock ids go in the columns that gateway uses.
+    const mockIsPayu = String(existing?.gateway || PAYU) === PAYU;
+    const mockOrderRef   = `mock_txn_${Date.now()}`;
+    const mockPaymentRef = `mock_pay_${Date.now()}`;
+
     const payment = await prisma.payment.update({
       where: { id: paymentId },
       data: {
-        status:      'paid',
-        payuTxnId:   `mock_txn_${Date.now()}`,
-        payuMihpayid: `mock_mihpay_${Date.now()}`,
+        status:           'paid',
+        gatewayOrderId:   mockOrderRef,
+        gatewayPaymentId: mockPaymentRef,
+        ...(mockIsPayu ? { payuTxnId: mockOrderRef, payuMihpayid: mockPaymentRef } : {}),
       },
       include: { template: { select: { name: true, slug: true } } },
     });

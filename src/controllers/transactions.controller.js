@@ -1,5 +1,7 @@
 const prisma = require('../utils/prisma');
 const { refundPayment } = require('../services/payu.service');
+const razorpay = require('../services/razorpay.service');
+const { RAZORPAY } = require('../services/paymentGateway.service');
 const { EXCLUDE_TEST_OWNER } = require('../utils/testFilters');
 
 // GET /api/v1/transactions
@@ -48,13 +50,28 @@ async function refund(req, res) {
   if (payment.status === 'refunded') {
     return res.status(409).json({ ok: false, message: 'Payment already refunded' });
   }
-  if (!payment.payuMihpayid) {
-    return res.status(400).json({ ok: false, message: 'No PayU payment ID — cannot refund' });
+
+  // Refund through the gateway that actually took the money -- and, for PayU,
+  // the merchant account that settled it. The other gateway, or the other PayU
+  // account, has no record of the transaction.
+  const isRazorpay = String(payment.gateway || 'payu') === RAZORPAY;
+  // gatewayPaymentId mirrors payuMihpayid on PayU orders; the fallback covers a
+  // row written before that column existed.
+  const reference = payment.gatewayPaymentId || payment.payuMihpayid;
+
+  if (!reference) {
+    return res.status(400).json({
+      ok: false,
+      message: `No ${isRazorpay ? 'Razorpay' : 'PayU'} payment ID — cannot refund`,
+    });
+  }
+  if (isRazorpay && !razorpay.isRazorpayConfigured()) {
+    return res.status(503).json({ ok: false, message: 'Razorpay is not configured on this server' });
   }
 
-  // Refund through the merchant account that actually settled this order --
-  // the other account has no record of the transaction.
-  const refundResult = await refundPayment(payment.payuMihpayid, payment.amount, payment.storefront);
+  const refundResult = isRazorpay
+    ? await razorpay.refundPayment(reference, payment.amount)
+    : await refundPayment(reference, payment.amount, payment.storefront);
 
   await prisma.payment.update({
     where: { id: payment.id },

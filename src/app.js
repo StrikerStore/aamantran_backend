@@ -9,6 +9,7 @@ const fs = require('fs');
 
 const routes = require('./routes');
 const webhookRouter = require('./routes/webhook');
+const razorpayWebhookRouter = require('./routes/razorpayWebhook');
 const errorHandler = require('./middleware/errorHandler');
 const siteUrls = require('./config/siteUrls');
 const storage = require('./config/storage');
@@ -80,6 +81,15 @@ app.use((_req, res, next) => {
   res.setHeader('Permissions-Policy', 'camera=(), microphone=(), geolocation=()');
   next();
 });
+
+// Razorpay webhook: the signature is over the RAW bytes of the body, so this
+// must be mounted before any parser that would rewrite them -- and before the
+// '/webhooks' urlencoded mount below, which would otherwise swallow it.
+app.use(
+  '/webhooks/razorpay',
+  express.raw({ type: '*/*', limit: '1mb' }),
+  razorpayWebhookRouter
+);
 
 // PayU IPN: form-encoded body — mount before express.json() but after express.urlencoded()
 // PayU sends application/x-www-form-urlencoded for IPN callbacks

@@ -1,6 +1,7 @@
 const express = require('express');
 const prisma  = require('../utils/prisma');
 const { verifyResponseHash } = require('../services/payu.service');
+const { markPaymentPaid, markPaymentFailed } = require('../services/payment.service');
 
 const router = express.Router();
 
@@ -14,6 +15,11 @@ const router = express.Router();
  * Handles:
  *  - Direct template purchases (payuTxnId on Payment)
  *  - Template swap balance payments (payuLinkId on TemplateSwapRequest)
+ *
+ * Marking a purchase paid goes through payment.service, the same helper the
+ * redirect uses. It used to be a second copy here that did not send the buyer's
+ * confirmation email -- so a buyer who closed the tab after paying was recorded
+ * as paid and never received the link to build their invitation.
  */
 router.post('/payu', async (req, res) => {
   // PayU IPN sends form-encoded data
@@ -45,12 +51,7 @@ router.post('/payu', async (req, res) => {
   if (status !== 'success') {
     // Non-success IPN — mark payment as failed if still pending
     try {
-      if (txnid) {
-        await prisma.payment.updateMany({
-          where: { payuTxnId: txnid, status: 'pending' },
-          data:  { status: 'failed' },
-        });
-      }
+      if (txnid) await markPaymentFailed({ payuTxnId: String(txnid) });
     } catch {
       // best-effort
     }
@@ -64,16 +65,7 @@ router.post('/payu', async (req, res) => {
     });
 
     if (payment && payment.status !== 'paid') {
-      await prisma.$transaction([
-        prisma.payment.update({
-          where: { id: payment.id },
-          data:  { status: 'paid', payuMihpayid: mihpayid || null },
-        }),
-        prisma.template.update({
-          where: { id: payment.templateId },
-          data:  { buyerCount: { increment: 1 } },
-        }),
-      ]);
+      await markPaymentPaid(payment, mihpayid);
     }
 
     // 2. Try swap payment
@@ -107,8 +99,11 @@ router.post('/payu', async (req, res) => {
             userId:       swap.userId,
             eventId:      swap.eventId,
             templateId:   swap.toTemplateId,
+            gateway:      'payu',
             payuTxnId:    txnid,
             payuMihpayid: mihpayid,
+            gatewayOrderId:   txnid,
+            gatewayPaymentId: mihpayid,
             amount:       swap.balanceAmount,
             status:       'paid',
           },
