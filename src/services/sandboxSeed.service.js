@@ -65,7 +65,7 @@ const EXTRA_FUNCTIONS = [
 ];
 
 const LINKS = {
-  instagramUrl:     'https://instagram.com/aamantran.online',
+  instagramUrl:     'https://www.instagram.com/aamantran_online/',
   instagramHashtag: 'ArjunWedsMeera',
   socialYoutubeUrl: 'https://youtu.be/dQw4w9WgXcQ',
   websiteUrl:       'https://www.aamantran.online',

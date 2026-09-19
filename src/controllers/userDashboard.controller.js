@@ -14,6 +14,7 @@ const { normalizeOptionalHttpUrl, normalizeOptionalHashtag } = require('../utils
 const siteUrls = require('../config/siteUrls');
 const { mintInvitePreviewToken } = require('../services/previewToken');
 const { recalcTemplateRating } = require('../utils/reviewAggregates');
+const { parseFieldSchema } = require('../services/mediaSlotUtils');
 
 // ─── HELPERS ─────────────────────────────────────────────────────────────────
 
@@ -629,13 +630,62 @@ async function listPeople(req, res) {
   return res.json({ ok: true, people });
 }
 
+const NAMES_CONFIRMED = 'Names are confirmed. Raise a support ticket to request changes.';
+
+/**
+ * Which roles can still change after the couple has confirmed names.
+ *
+ * Decided from the template's own schema — the same `template.fieldSchema` the
+ * builder reads — and never from the request. This used to trust a
+ * `required: false` sent by the client, which let a crafted request edit a
+ * confirmed bride or groom name.
+ *
+ * A role stays editable only when the schema declares it and marks it not
+ * required (parents and the like). Everything else is locked once confirmed:
+ * required roles, roles the schema does not declare, and every role on a legacy
+ * template with no people schema — the same thing the builder shows.
+ *
+ * @returns {(role: string) => boolean} true when the role is locked
+ */
+function lockedAfterConfirm(fieldSchema) {
+  const schema = parseFieldSchema(fieldSchema);
+  const declared = schema && Array.isArray(schema.people) ? schema.people : [];
+  const editable = new Set(
+    declared
+      .filter((p) => p && p.role && !p.required)
+      .map((p) => String(p.role).trim().toLowerCase()),
+  );
+  return (role) => !editable.has(String(role || '').trim().toLowerCase());
+}
+
+/** The event with what the people handlers need to decide, or null. */
+function loadEventForPeople(eventId) {
+  return prisma.event.findUnique({
+    where: { id: eventId },
+    select: { id: true, ownerId: true, namesAreFrozen: true, template: { select: { fieldSchema: true } } },
+  });
+}
+
+/**
+ * The person named in the URL, only if it belongs to the event in the URL.
+ * Ownership is checked on the event, so a person id from someone else's event
+ * must not be reachable through yours.
+ */
+function loadPersonOfEvent(eventId, personId) {
+  return prisma.eventPerson.findFirst({ where: { id: String(personId || ''), eventId } });
+}
+
 async function addPerson(req, res) {
-  const event = await prisma.event.findUnique({ where: { id: req.params.id }, select: { id: true, ownerId: true, namesAreFrozen: true } });
+  const event = await loadEventForPeople(req.params.id);
   if (!ownerGuard(event, req.user.id)) return res.status(404).json({ ok: false, message: 'Event not found' });
-  if (event.namesAreFrozen) return res.status(403).json({ ok: false, message: 'Names are confirmed. Raise a support ticket to request changes.' });
 
   const { role, name, photoUrl, extraData, sortOrder } = req.body || {};
   if (!role || !name) return res.status(400).json({ ok: false, message: 'role and name are required' });
+
+  // An optional name left blank at confirmation can still be filled in later.
+  if (event.namesAreFrozen && lockedAfterConfirm(event.template?.fieldSchema)(role)) {
+    return res.status(403).json({ ok: false, message: NAMES_CONFIRMED });
+  }
 
   const person = await prisma.eventPerson.create({
     data: { eventId: req.params.id, role, name, photoUrl: photoUrl || null, extraData: extraData || null, sortOrder: sortOrder ?? 0 },
@@ -644,16 +694,23 @@ async function addPerson(req, res) {
 }
 
 async function updatePerson(req, res) {
-  const event = await prisma.event.findUnique({ where: { id: req.params.id }, select: { id: true, ownerId: true, namesAreFrozen: true } });
+  const event = await loadEventForPeople(req.params.id);
   if (!ownerGuard(event, req.user.id)) return res.status(404).json({ ok: false, message: 'Event not found' });
-  // Allow updates when frozen only if the caller marks the role as optional.
-  // Required names are blocked — the frontend disables those fields.
-  const { required } = req.body || {};
-  if (event.namesAreFrozen && required !== false) {
-    return res.status(403).json({ ok: false, message: 'Names are confirmed. Raise a support ticket to request changes.' });
-  }
+
+  const existing = await loadPersonOfEvent(event.id, req.params.pid);
+  if (!existing) return res.status(404).json({ ok: false, message: 'Person not found' });
 
   const { role, name, photoUrl, extraData, sortOrder } = req.body || {};
+
+  if (event.namesAreFrozen) {
+    const isLocked = lockedAfterConfirm(event.template?.fieldSchema);
+    // Both the role it has and the role it would get: an optional person must
+    // not be renamed into a locked role, nor a locked one out of it.
+    if (isLocked(existing.role) || (role !== undefined && isLocked(role))) {
+      return res.status(403).json({ ok: false, message: NAMES_CONFIRMED });
+    }
+  }
+
   const data = {};
   if (role !== undefined)      data.role      = role;
   if (name !== undefined)      data.name      = name;
@@ -661,16 +718,23 @@ async function updatePerson(req, res) {
   if (extraData !== undefined) data.extraData = extraData;
   if (sortOrder !== undefined) data.sortOrder = sortOrder;
 
-  const person = await prisma.eventPerson.update({ where: { id: req.params.pid }, data });
+  const person = await prisma.eventPerson.update({ where: { id: existing.id }, data });
   return res.json({ ok: true, person });
 }
 
 async function deletePerson(req, res) {
-  const event = await prisma.event.findUnique({ where: { id: req.params.id }, select: { id: true, ownerId: true, namesAreFrozen: true } });
+  const event = await loadEventForPeople(req.params.id);
   if (!ownerGuard(event, req.user.id)) return res.status(404).json({ ok: false, message: 'Event not found' });
-  if (event.namesAreFrozen) return res.status(403).json({ ok: false, message: 'Names are confirmed. Raise a support ticket to request changes.' });
 
-  await prisma.eventPerson.delete({ where: { id: req.params.pid } });
+  const existing = await loadPersonOfEvent(event.id, req.params.pid);
+  if (!existing) return res.status(404).json({ ok: false, message: 'Person not found' });
+
+  // Clearing an optional name is allowed after confirmation; a locked one is not.
+  if (event.namesAreFrozen && lockedAfterConfirm(event.template?.fieldSchema)(existing.role)) {
+    return res.status(403).json({ ok: false, message: NAMES_CONFIRMED });
+  }
+
+  await prisma.eventPerson.delete({ where: { id: existing.id } });
   return res.json({ ok: true });
 }
 
