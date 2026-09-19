@@ -1,10 +1,20 @@
 /**
  * One definition of which reviews count toward a public rating.
  *
- * Admin-created reviews are seeded by the team, not submitted by customers.
- * They stay visible on the store — labelled as curated — but they must never
- * move an average, a review count or the AggregateRating in structured data,
- * because that would present team-authored copy as customer evidence.
+ * EVERY VISIBLE REVIEW COUNTS. `isAdminCreated` records how a review reached
+ * the database — typed into the admin panel rather than submitted through the
+ * site — and NOT whether a customer wrote it. The owner collects reviews by
+ * hand, from messages and calls, and enters them; every one is a real
+ * customer's words.
+ *
+ * That is why the flag no longer excludes a review from the average, the count
+ * or the AggregateRating in structured data. How a review arrived is still
+ * recorded, because it is worth knowing, but it is not a claim about who wrote
+ * it.
+ *
+ * If a review is ever written as an illustration rather than quoted from a
+ * customer, it must not be published at all — presenting invented copy as
+ * customer evidence is what this module exists to prevent.
  *
  * Every rating writer and public aggregate goes through here, so the rule
  * cannot drift between the admin panel, the couple dashboard and the store.
@@ -12,8 +22,8 @@
 const prisma = require('./prisma');
 const { EXCLUDE_TEST_OWNER } = require('./testFilters');
 
-/** Counts toward ratings: visible, customer-submitted, not owned by a test account. */
-const GENUINE_REVIEW_WHERE = { isHidden: false, isAdminCreated: false, ...EXCLUDE_TEST_OWNER };
+/** Counts toward ratings: visible, and not owned by a test account. */
+const GENUINE_REVIEW_WHERE = { isHidden: false, ...EXCLUDE_TEST_OWNER };
 
 /** Shown publicly, whatever wrote it — customer reviews plus curated ones. */
 const VISIBLE_REVIEW_WHERE = { isHidden: false, ...EXCLUDE_TEST_OWNER };
@@ -41,7 +51,12 @@ async function genuineAggregate(scope = {}) {
   };
 }
 
-/** How many visible reviews are curated — shown, but excluded from the average above. */
+/**
+ * How many visible reviews were entered through the admin panel.
+ *
+ * Kept because the API has always returned it and the admin finds it useful. It
+ * no longer means "does not count", and the storefront no longer shows it.
+ */
 function countCurated(scope = {}) {
   return prisma.templateReview.count({
     where: { ...VISIBLE_REVIEW_WHERE, isAdminCreated: true, ...scope },
