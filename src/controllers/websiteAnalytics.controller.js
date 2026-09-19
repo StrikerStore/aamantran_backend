@@ -197,4 +197,7 @@ async function getLive(req, res) {
   });
 }
 
-module.exports = { getSummary, getLive };
+// parseRange/parseStorefront/sessionStorefrontWhere are exported so the business
+// dashboard applies exactly the same range cap and storefront rule — including
+// counting NULL-storefront sessions as India — rather than a second copy of it.
+module.exports = { getSummary, getLive, parseRange, parseStorefront, sessionStorefrontWhere };
