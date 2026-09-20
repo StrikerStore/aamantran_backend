@@ -30,3 +30,9 @@ Thumbs.db
 .idea/
 *.sw?
 *.swp
+
+# Accountant's spreadsheets, kept here while working on the GST report.
+# These hold real customers' names, addresses and phone numbers, from this
+# store or another one the same company runs — never commit them.
+*.xlsx
+*.xls

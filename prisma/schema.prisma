@@ -518,6 +518,15 @@ model Payment {
   /// not persisted at all and could not be recovered from the inclusive total.
   gstAmount         Int?     @default(0)
   status            String   @default("pending") // pending|paid|failed|refunded
+  /// When the refund was actually issued, so a refund falls in the GST period it
+  /// was made in rather than the one the sale was made in. Before these columns
+  /// existed a refund wrote only `status`, so refunds recorded then have no date
+  /// and stay NULL — the GST report lists those under the order date and says so.
+  refundedAt        DateTime?
+  /// Minor units of `currency`, like `amount`. Today always the whole amount;
+  /// a column of its own so a partial refund needs no migration.
+  refundAmount      Int?
+  refundReference   String?  // the gateway's own refund id
   isOnboarded       Boolean  @default(false)
   onboardedAt       DateTime?
   reminderSentAt    DateTime?

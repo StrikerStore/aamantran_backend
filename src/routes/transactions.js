@@ -6,8 +6,9 @@ const router = express.Router();
 router.use(auth);
 
 router.get ('/',           controller.list);
-// Before '/:id', or 'export' is read as a payment id.
+// Before '/:id', or these are read as payment ids.
 router.get ('/export',     controller.exportCsv);
+router.get ('/gst-report', controller.gstReport);
 router.get ('/:id',        controller.get);
 router.post('/:id/refund', controller.refund);
 

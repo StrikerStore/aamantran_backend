@@ -3,6 +3,8 @@ const { refundPayment } = require('../services/payu.service');
 const razorpay = require('../services/razorpay.service');
 const { RAZORPAY } = require('../services/paymentGateway.service');
 const { EXCLUDE_TEST_OWNER } = require('../utils/testFilters');
+const gstReportService = require('../services/gstReport.service');
+const { daysBetween } = require('../utils/istDate');
 
 const STATUSES = ['pending', 'paid', 'failed', 'refunded'];
 const GATEWAYS = ['payu', 'razorpay'];
@@ -194,6 +196,54 @@ async function exportCsv(req, res) {
   res.send('﻿' + lines.join('\r\n') + '\r\n');
 }
 
+/**
+ * GET /api/v1/transactions/gst-report?from=YYYY-MM-DD&to=YYYY-MM-DD
+ *
+ * The India GST filing file: .xlsx, two sheets, in the accountant's existing
+ * column layout. Its range is its own, deliberately not the table's filters —
+ * an abandoned "gateway = razorpay" in the UI must not file a partial return.
+ */
+const YMD = /^\d{4}-\d{2}-\d{2}$/;
+
+async function gstReport(req, res) {
+  const from = String(req.query.from || '').trim();
+  const to = String(req.query.to || '').trim();
+
+  if (!YMD.test(from) || !YMD.test(to)) {
+    return res.status(400).json({ ok: false, message: 'Give a from and a to date, both as YYYY-MM-DD.' });
+  }
+  const days = daysBetween(from, to);
+  if (days === null) {
+    return res.status(400).json({ ok: false, message: 'One of those dates is not a real date.' });
+  }
+  if (days < 1) {
+    return res.status(400).json({ ok: false, message: 'The "from" date must not be after the "to" date.' });
+  }
+  if (days > gstReportService.GST_MAX_DAYS) {
+    return res.status(400).json({ ok: false, message: `That range is ${days} days. Ask for a year or less at a time.` });
+  }
+
+  // Counted before building: a GST return that is silently short is the worst
+  // thing this endpoint could produce, so it refuses rather than truncates.
+  const counts = await gstReportService.countRows(from, to);
+  if (counts.total > gstReportService.GST_MAX_ROWS) {
+    return res.status(413).json({
+      ok: false,
+      message:
+        `This range has ${counts.total.toLocaleString('en-IN')} India orders — more than the ` +
+        `${gstReportService.GST_MAX_ROWS.toLocaleString('en-IN')}-row limit for one file. ` +
+        'Ask for a shorter range; one month at a time is the usual way to file.',
+    });
+  }
+
+  const { buffer, filename } = await gstReportService.buildGstReport(from, to);
+
+  res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+  res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
+  res.setHeader('Cache-Control', 'no-store');
+  res.send(buffer);
+}
+
 // GET /api/v1/transactions/:id
 async function get(req, res) {
   const payment = await prisma.payment.findUniqueOrThrow({
@@ -238,12 +288,20 @@ async function refund(req, res) {
     ? await razorpay.refundPayment(reference, payment.amount)
     : await refundPayment(reference, payment.amount, payment.storefront);
 
+  // The date matters beyond the admin table: a refund belongs in the GST period
+  // it was made in, not the one the sale was made in, and only this line can
+  // tell the two apart.
   await prisma.payment.update({
     where: { id: payment.id },
-    data:  { status: 'refunded' },
+    data:  {
+      status: 'refunded',
+      refundedAt: new Date(),
+      refundAmount: payment.amount,
+      refundReference: refundResult?.id || refundResult?.request_id || null,
+    },
   });
 
   res.json({ ok: true, data: refundResult, message: 'Refund initiated' });
 }
 
-module.exports = { list, get, refund, exportCsv };
+module.exports = { list, get, refund, exportCsv, gstReport };
