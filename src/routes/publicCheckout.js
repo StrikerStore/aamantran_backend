@@ -268,7 +268,8 @@ router.post('/order', async (req, res) => {
         consentAt:     new Date(),
         policyVersion: POLICY_VERSION,
         marketingOptIn: marketingOptIn === true,
-        ...(trialDemoId ? { trialDemoId } : {}),
+        // fromTrialDemo outlives the link, which goes NULL when the demo is erased.
+        ...(trialDemoId ? { trialDemoId, fromTrialDemo: true } : {}),
       },
       select: { id: true, orderId: true },
     });

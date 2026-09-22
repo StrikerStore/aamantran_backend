@@ -539,10 +539,15 @@ model Payment {
   /// is erased within a day and this becomes NULL; the payment is untouched.
   trialDemoId       String?
   trialDemo         TrialDemo? @relation(fields: [trialDemoId], references: [id], onDelete: SetNull)
+  /// Whether the order came from a try-it demo. trialDemoId above goes NULL when
+  /// the demo is erased a day later, so this is what analytics counts: a fact
+  /// about the order, carrying nothing the visitor typed.
+  fromTrialDemo     Boolean  @default(false)
   createdAt         DateTime @default(now())
 
   @@index([storefront, status])
   @@index([trialDemoId])
+  @@index([fromTrialDemo, createdAt])
   /// Every gateway callback, IPN and webhook looks a payment up by one of these.
   /// They were unindexed full scans before Razorpay made the traffic worth it.
   @@index([payuTxnId])

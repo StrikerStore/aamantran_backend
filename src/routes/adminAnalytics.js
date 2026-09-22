@@ -3,6 +3,7 @@ const router = express.Router();
 const verifyAdminJWT = require('../middleware/auth');
 const { getSummary, getLive } = require('../controllers/websiteAnalytics.controller');
 const { getBusiness } = require('../controllers/businessMetrics.controller');
+const { getInsights, getTrialDemos } = require('../controllers/marketingInsights.controller');
 
 router.use(verifyAdminJWT);
 
@@ -11,5 +12,9 @@ router.get('/live', getLive);
 // What was sold, rather than who visited. Behind the same range and storefront
 // rules as /summary.
 router.get('/business', getBusiness);
+// Campaign planning: channels, designs, timing, and plain-sentence findings.
+router.get('/insights', getInsights);
+// "Try it with your names": live demos, the last day, and history.
+router.get('/trial-demos', getTrialDemos);
 
 module.exports = router;
