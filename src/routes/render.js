@@ -330,6 +330,29 @@ function computeExpiryFromFunctions(functions = []) {
   return maxDate ? addMonths(maxDate, 6) : null;
 }
 
+/**
+ * A partial invite shows the main invite's people and photos.
+ *
+ * The partial ("subset") invite is the same celebration with fewer functions.
+ * Its own people and media rows are a copy taken when the pair was created, and
+ * the couple only ever edits the main invite — so that copy goes stale, and even
+ * points at files the main invite deletes when a photo is replaced. Rendering
+ * from the main invite's rows keeps both links on one set of photos. Functions
+ * stay the partial's own. Falls back to the partial's rows if the main is gone.
+ */
+async function withPairPhotos(event, db = prisma) {
+  if (event?.inviteScope !== 'subset' || !event.invitePairId) return event;
+  const main = await db.event.findFirst({
+    where: { invitePairId: event.invitePairId, inviteScope: 'full', id: { not: event.id } },
+    select: {
+      people: { orderBy: { sortOrder: 'asc' } },
+      media:  { orderBy: { sortOrder: 'asc' } },
+    },
+  });
+  if (!main) return event;
+  return { ...event, people: main.people, media: main.media };
+}
+
 // GET /demo/:slug — serve template with demo data (public)
 router.get('/demo/:slug', async (req, res) => {
   const template = await prisma.template.findUnique({
@@ -457,7 +480,7 @@ router.get('/try/:token', async (req, res) => {
 
 // GET /i/:slug — serve couple's live invitation (public)
 router.get('/i/:slug', async (req, res) => {
-  const event = await prisma.event.findUnique({
+  const row = await prisma.event.findUnique({
     where:   { slug: req.params.slug },
     include: {
       template:        true,
@@ -470,8 +493,9 @@ router.get('/i/:slug', async (req, res) => {
     },
   });
 
-  if (!event) return res.status(404).send('<h1>Invitation not found</h1>');
-  if (!event.isPublished) return res.status(403).send('<h1>This invitation is not published yet</h1>');
+  if (!row) return res.status(404).send('<h1>Invitation not found</h1>');
+  if (!row.isPublished) return res.status(403).send('<h1>This invitation is not published yet</h1>');
+  const event = await withPairPhotos(row);
   const expiryDate = event.expiresAt ? new Date(event.expiresAt) : computeExpiryFromFunctions(event.functions);
   if (expiryDate && expiryDate.getTime() < Date.now()) {
     return res.status(410).send('<h1>This invitation has expired. Please contact the host.</h1>');
@@ -550,7 +574,7 @@ router.get('/i/:slug', async (req, res) => {
 
 // GET /i/:slug/preview — draft preview requires ?pt= signed JWT (admin or couple dashboard)
 router.get('/i/:slug/preview', async (req, res) => {
-  const event = await prisma.event.findUnique({
+  const row = await prisma.event.findUnique({
     where:   { slug: req.params.slug },
     include: {
       template:        true,
@@ -563,17 +587,18 @@ router.get('/i/:slug/preview', async (req, res) => {
     },
   });
 
-  if (!event) return res.status(404).send('<h1>Invitation not found</h1>');
+  if (!row) return res.status(404).send('<h1>Invitation not found</h1>');
 
-  if (!event.isPublished) {
+  if (!row.isPublished) {
     const pt = req.query.pt;
-    if (!verifyInvitePreviewToken(pt, event.slug)) {
+    if (!verifyInvitePreviewToken(pt, row.slug)) {
       return res
         .status(403)
         .send('<h1>Preview not available</h1><p>Use “Open preview” from the admin user page or couple dashboard to get a valid link.</p>');
     }
   }
 
+  const event = await withPairPhotos(row);
   const data = buildInvitationData(event);
   const variant = detectVariant(req);
   const renderSource = event.templateVersion
