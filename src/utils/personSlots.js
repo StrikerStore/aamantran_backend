@@ -141,7 +141,30 @@ function normalizeFieldSchema(nextSchema, previousSchema) {
       f && typeof f === 'object' && f.key ? { ...f, key: toPersonKey(String(f.key), map) } : f
     ));
   }
+  const dashboard = normalizeDashboardSteps(next.dashboard);
+  if (dashboard) out.dashboard = dashboard;
+  else delete out.dashboard;
   return out;
+}
+
+/** Guest Options items a template can show its couples, in display order. */
+const GUEST_OPTION_KEYS = ['instagram', 'hashtag', 'youtube', 'rsvp', 'wishes'];
+
+/**
+ * Which builder steps and items the couple sees for this template:
+ *   { guestOptions: ['instagram', …], showMedia: boolean }
+ * Absent (every template before this setting) means everything is shown, so
+ * this returns null for anything that is not a usable block.
+ */
+function normalizeDashboardSteps(value) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
+  const out = {};
+  if (Array.isArray(value.guestOptions)) {
+    const picked = new Set(value.guestOptions.map((k) => String(k).trim().toLowerCase()));
+    out.guestOptions = GUEST_OPTION_KEYS.filter((k) => picked.has(k));
+  }
+  if (typeof value.showMedia === 'boolean') out.showMedia = value.showMedia;
+  return Object.keys(out).length ? out : null;
 }
 
 module.exports = {
@@ -157,4 +180,6 @@ module.exports = {
   roleOptionSlug,
   matchRoleOption,
   normalizeFieldSchema,
+  normalizeDashboardSteps,
+  GUEST_OPTION_KEYS,
 };
