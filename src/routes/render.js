@@ -533,12 +533,20 @@ router.get('/i/:slug', async (req, res) => {
         desktopEntryFile: event.template.desktopEntryFile,
         mobileEntryFile:  event.template.mobileEntryFile,
       };
-  // Link-preview card for WhatsApp and friends. Names mirror what the couple
-  // sees; the image prefers their uploaded WhatsApp share photo.
+  // Link-preview card for WhatsApp and friends. Groom first, and the first
+  // ceremony's date in IST — the same order and date as the dashboard's share
+  // caption, so the card and the message under it agree. No venue: the caption
+  // drops it whenever ceremonies span venues. The image prefers the couple's
+  // uploaded WhatsApp share photo.
   const shareNames =
-    [data.bride_name, data.groom_name].filter(Boolean).join(' & ')
+    [data.groom_name, data.bride_name].filter(Boolean).join(' & ')
     || (event.people || []).slice(0, 2).map((p) => p.name).filter(Boolean).join(' & ');
-  const shareDetails = [data.wedding_date, data.venue_name].filter(Boolean).join(' — ');
+  const firstFnDate = event.functions?.[0]?.date;
+  const shareDetails = firstFnDate
+    ? new Date(firstFnDate).toLocaleDateString('en-IN', {
+        day: 'numeric', month: 'long', year: 'numeric', timeZone: 'Asia/Kolkata',
+      })
+    : '';
 
   const html = await renderTemplate(renderSource.folderPath, data, {
     variant,
