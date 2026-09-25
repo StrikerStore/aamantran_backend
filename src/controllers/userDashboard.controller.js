@@ -569,10 +569,65 @@ async function updatePartialFunctions(req, res) {
 
 /** PATCH /api/user/events/:id/unpublish */
 async function unpublishEvent(req, res) {
-  const event = await prisma.event.findUnique({ where: { id: req.params.id }, select: { id: true, ownerId: true } });
+  const event = await prisma.event.findUnique({
+    where: { id: req.params.id },
+    select: { id: true, ownerId: true, invitePairId: true },
+  });
   if (!ownerGuard(event, req.user.id)) return res.status(404).json({ ok: false, message: 'Event not found' });
-  await prisma.event.update({ where: { id: req.params.id }, data: { isPublished: false } });
+  // Taking the invitation offline takes its second link (selected ceremonies)
+  // offline too — otherwise guests holding that link could still open it.
+  // Publishing again republishes both (publishEvent).
+  await prisma.event.updateMany({
+    where: event.invitePairId
+      ? { invitePairId: event.invitePairId, ownerId: req.user.id }
+      : { id: event.id },
+    data: { isPublished: false },
+  });
   return res.json({ ok: true, message: 'Invitation unpublished' });
+}
+
+/**
+ * GET /api/user/events/:id/link-available?link=…
+ *
+ * Live check for the "Personalise your link" field, using exactly the rules
+ * publishing applies (same cleaning, same uniqueness), so what the couple sees
+ * while typing is what publishing will accept. The event's own current link and
+ * its paired event's link count as free for it.
+ *
+ * Also says whether the link still looks like one the system made up, so the
+ * builder can suggest personalising it before going live. Defaults are:
+ *   <username>-<template slug>[-N]   (created at checkout)
+ *   event-<number>                   (old set-up page)
+ *   …-all / …-partial                (paired invites / default second link)
+ */
+async function checkLinkAvailable(req, res) {
+  const event = await prisma.event.findUnique({
+    where: { id: req.params.id },
+    select: { id: true, ownerId: true, invitePairId: true, template: { select: { slug: true } } },
+  });
+  if (!ownerGuard(event, req.user.id)) return res.status(404).json({ ok: false, message: 'Event not found' });
+
+  const cleaned = slugify(String(req.query.link || '').slice(0, 80));
+  const templateSlug = slugify(event.template?.slug || '');
+  const userPart = slugify(req.user.username || '');
+  const isDefault = Boolean(cleaned) && (
+    (userPart && templateSlug && new RegExp(`^${userPart}-${templateSlug}(-\\d+)?$`).test(cleaned))
+    || /^event-\d+/.test(cleaned)
+    || /-(all|partial)$/.test(cleaned)
+  );
+
+  if (!cleaned) return res.json({ ok: true, cleaned, available: false, reason: 'empty', isDefault: false });
+  if (cleaned.length < 3) return res.json({ ok: true, cleaned, available: false, reason: 'short', isDefault });
+
+  const taken = await prisma.event.findUnique({ where: { slug: cleaned }, select: { id: true, invitePairId: true } });
+  const ours = taken && (taken.id === event.id || (event.invitePairId && taken.invitePairId === event.invitePairId));
+  return res.json({
+    ok: true,
+    cleaned,
+    available: !taken || Boolean(ours),
+    reason: taken && !ours ? 'taken' : null,
+    isDefault,
+  });
 }
 
 /** GET /api/user/events/:id/stats */
@@ -1500,6 +1555,7 @@ module.exports = {
   // Exported for scripts/backfill-invite-pair-settings.js
   PAIR_SHARED_FIELDS, readPairSharedFields,
   listEvents, createEvent, getPreviewToken, getEvent, updateEvent, confirmNames, publishEvent, updatePartialFunctions, unpublishEvent, getEventStats,
+  checkLinkAvailable,
   listPeople, addPerson, updatePerson, deletePerson,
   listFunctions, addFunction, updateFunction, deleteFunction,
   listVenues, addVenue, updateVenue, deleteVenue,

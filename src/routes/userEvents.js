@@ -19,6 +19,7 @@ function maybeUserMediaUpload(req, res, next) {
 router.get ('/',                              c.listEvents);
 router.post('/',                              c.createEvent);
 router.get ('/:id/preview-token',             c.getPreviewToken);
+router.get ('/:id/link-available',            c.checkLinkAvailable);
 router.get ('/:id',                           c.getEvent);
 router.put ('/:id',                           c.updateEvent);
 router.patch('/:id/confirm-names',            c.confirmNames);
