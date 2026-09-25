@@ -3,43 +3,60 @@ const { readTemplateHtml } = require('./fileManager');
 const { injectAamantranRuntime } = require('./aamantranSdk');
 const siteUrls = require('../config/siteUrls');
 const { parseFlexibleDateInputToYyyyMmDd } = require('../utils/dateNormalize');
+const {
+  SLOTS, legacySlotMapFor, toPersonKey, toLegacyKey, roleOptionSlug,
+} = require('../utils/personSlots');
+
+/**
+ * Templates written before the person1/person2 rename still say {{groom_name}},
+ * {{bride_father_name}}, `if_role people "groom_grandfather"` and so on. While
+ * this is on, every slot-based variable, custom field and helper role is also
+ * answered under its old name (per the template's legacySlotMap). Turn it off
+ * once every published design has been re-uploaded with person1/person2.
+ */
+const LEGACY_SLOT_ALIASES = true;
 
 // ─── Handlebars helpers ──────────────────────────────────────────────────────
 
+/** A person answers to its role and, while legacy aliases are on, its old name. */
+function hasRole(p, role) {
+  return p.role === role || (Array.isArray(p.aliases) && p.aliases.includes(role));
+}
+
 /**
- * {{#people_by_role people "bride"}} ... {{this.name}} ... {{/people_by_role}}
+ * {{#people_by_role people "person2"}} ... {{this.name}} ... {{/people_by_role}}
  * Iterates over people matching the given role.
  */
 Handlebars.registerHelper('people_by_role', function (people, role, options) {
-  const matches = (people || []).filter(p => p.role === role);
+  const matches = (people || []).filter(p => hasRole(p, role));
   if (!matches.length) return options.inverse ? options.inverse(this) : '';
   return matches.map(p => options.fn(p)).join('');
 });
 
 /**
- * {{#person people "bride"}} {{name}} {{/person}}
+ * {{#person people "person2"}} {{name}} {{/person}}
  * Block helper for a single person by role (first match).
  */
 Handlebars.registerHelper('person', function (people, role, options) {
-  const match = (people || []).find(p => p.role === role);
+  const match = (people || []).find(p => hasRole(p, role));
   if (!match) return options.inverse ? options.inverse(this) : '';
   return options.fn(match);
 });
 
 /**
- * {{person_name people "bride_father"}}
+ * {{person_name people "person2_father"}}
  * Simple inline helper — returns the name of the first person with that role.
  */
 Handlebars.registerHelper('person_name', function (people, role) {
-  const match = (people || []).find(p => p.role === role);
+  const match = (people || []).find(p => hasRole(p, role));
   return match ? match.name : '';
 });
 
 /**
- * {{person_photo people "bride"}}
+ * {{person_photo people "person2"}}
  */
 Handlebars.registerHelper('person_photo', function (people, role) {
-  const match = (people || []).find(p => p.role === role);
+  const match = (people || []).find(p => hasRole(p, role));
   return match ? (match.photo_url || '') : '';
 });
 
@@ -51,11 +68,11 @@ Handlebars.registerHelper('custom_field', function (custom, key) {
 });
 
 /**
- * {{#if_role people "bride"}} ... {{/if_role}}
+ * {{#if_role people "person2"}} ... {{/if_role}}
  * Conditional: renders block only if a person with that role exists.
  */
 Handlebars.registerHelper('if_role', function (people, role, options) {
-  const exists = (people || []).some(p => p.role === role);
+  const exists = (people || []).some(p => hasRole(p, role));
   return exists ? options.fn(this) : (options.inverse ? options.inverse(this) : '');
 });
 
@@ -256,34 +273,117 @@ async function renderTemplate(folderName, data, options = {}) {
 }
 
 /**
+ * People → the structured list and the flat variables templates read.
+ *
+ * Roles are normalised to person1/person2 first, so a row written before the
+ * rename renders the same as one written after. Then, per person:
+ *   {{<role>_name}}, {{<role>_photo}}, {{<role>_<extraKey>}}
+ * and, for someone whose Bride/Groom-style choice is set (extraData.role_choice):
+ *   {{<role>_role}}          → the chosen option, e.g. "Bride"
+ *   {{<role>_is_<option>}}   → true for that option, e.g. {{person2_is_bride}}
+ * plus {{<role>_has_parents}} when a <role>_father or <role>_mother is named.
+ * The template decides the wording ("son of" / "daughter of") from these.
+ *
+ * @param {Array<{role: string, name: string, photo_url: string, extra: object}>} rows
+ * @param {{person1: string, person2: string}} legacyMap
+ */
+function buildPeopleVars(rows, legacyMap) {
+  const people = rows.map((p) => {
+    const role = toPersonKey(p.role, legacyMap);
+    const legacy = LEGACY_SLOT_ALIASES ? toLegacyKey(role, legacyMap) : null;
+    return { ...p, role, aliases: legacy ? [legacy] : [] };
+  });
+
+  const vars = {};
+  const roles = new Set(people.map((p) => p.role));
+  for (const slot of SLOTS) vars[`${slot}_has_parents`] = false;
+
+  for (const p of people) {
+    const prefix = p.role; // e.g. "person1", "person2_father", "birthday_person"
+    vars[`${prefix}_name`]  = p.name;
+    vars[`${prefix}_photo`] = p.photo_url;
+    for (const [k, v] of Object.entries(p.extra || {})) {
+      vars[`${prefix}_${k}`] = v; // e.g. person1_bio, person2_subtitle
+    }
+    const choice = String(p.extra?.role_choice || '').trim();
+    if (choice) {
+      vars[`${prefix}_role`] = choice;
+      const slug = roleOptionSlug(choice);
+      if (slug) vars[`${prefix}_is_${slug}`] = true;
+    }
+    if (roles.has(`${prefix}_father`) || roles.has(`${prefix}_mother`)) {
+      vars[`${prefix}_has_parents`] = true;
+    }
+  }
+
+  // Same values under the old names, for template HTML not yet re-uploaded.
+  const legacyVars = {};
+  if (LEGACY_SLOT_ALIASES) {
+    for (const [k, v] of Object.entries(vars)) {
+      const old = toLegacyKey(k, legacyMap);
+      if (old) legacyVars[old] = v;
+    }
+  }
+  return { people, peopleFlatVars: vars, legacyVars };
+}
+
+/** Custom-field keys normalised to person1/person2, plus old-name aliases. */
+function withSlotCustomKeys(custom, legacyMap) {
+  const out = {};
+  for (const [k, v] of Object.entries(custom)) out[toPersonKey(k, legacyMap)] = v;
+  if (LEGACY_SLOT_ALIASES) {
+    for (const [k, v] of Object.entries({ ...out })) {
+      const old = toLegacyKey(k, legacyMap);
+      if (old && !(old in out)) out[old] = v;
+    }
+  }
+  return out;
+}
+
+/** {{person1_name}} / {{person2_name}} (and, while aliased, {{groom_name}} / {{bride_name}}). */
+function coupleNameVars(names, peopleFlatVars, legacyMap) {
+  const out = {};
+  for (const slot of SLOTS) out[`${slot}_name`] = names[slot] || peopleFlatVars[`${slot}_name`] || '';
+  if (LEGACY_SLOT_ALIASES) {
+    for (const slot of SLOTS) out[`${legacyMap[slot]}_name`] = out[`${slot}_name`];
+  }
+  return out;
+}
+
+/**
+ * The couple's names from the row, falling back to the pre-rename columns
+ * (brideName/groomName) through the template's slot map.
+ */
+function coupleNamesFrom(row, legacyMap) {
+  const legacyColumn = { groom: row.groomName, bride: row.brideName };
+  return {
+    person1: row.person1Name || legacyColumn[legacyMap.person1] || '',
+    person2: row.person2Name || legacyColumn[legacyMap.person2] || '',
+  };
+}
+
+/**
  * Build the data object for a couple's live invitation.
- * Produces flat shortcut variables (bride_name, groom_name, etc.)
+ * Produces flat shortcut variables (person1_name, person2_father_name, etc.)
  * PLUS structured arrays (people[], venues[], functions[], custom{}).
  */
 function buildInvitationData(event) {
-  // ── People: structured array ──
-  const people = (event.people || [])
-    .sort((a, b) => a.sortOrder - b.sortOrder)
-    .map(p => ({
-      role:      p.role,
-      name:      p.name,
-      photo_url: p.photoUrl || '',
-      extra:     p.extraData || {},
-    }));
+  // The slot map of the version being rendered, so an old snapshot's HTML still
+  // gets its old names.
+  const legacyMap = legacySlotMapFor(event.templateVersion?.fieldSchema ?? event.template?.fieldSchema);
 
-  // ── People: flat shortcut variables ──
-  // Generates {{bride_name}}, {{bride_photo}}, {{groom_father_name}}, etc.
-  const peopleFlatVars = {};
-  for (const p of people) {
-    const prefix = p.role; // e.g. "bride", "groom_father", "birthday_person"
-    peopleFlatVars[`${prefix}_name`]  = p.name;
-    peopleFlatVars[`${prefix}_photo`] = p.photo_url;
-    if (p.extra) {
-      for (const [k, v] of Object.entries(p.extra)) {
-        peopleFlatVars[`${prefix}_${k}`] = v; // e.g. bride_bio, groom_subtitle
-      }
-    }
-  }
+  // ── People ──
+  const { people, peopleFlatVars, legacyVars } = buildPeopleVars(
+    [...(event.people || [])]
+      .sort((a, b) => a.sortOrder - b.sortOrder)
+      .map(p => ({
+        role:      p.role,
+        name:      p.name,
+        photo_url: p.photoUrl || '',
+        extra:     p.extraData || {},
+      })),
+    legacyMap,
+  );
 
   // ── Venues: structured array ──
   const venues = (event.venues || []).map(v => ({
@@ -298,7 +398,7 @@ function buildInvitationData(event) {
   }));
 
   // ── Custom fields: key→value object ──
-  const custom = {};
+  const rawCustom = {};
   for (const cf of (event.customFields || [])) {
     let v = cf.fieldType === 'json'
       ? safeJsonParse(cf.fieldValue)
@@ -307,8 +407,9 @@ function buildInvitationData(event) {
       const iso = parseFlexibleDateInputToYyyyMmDd(v);
       if (iso) v = iso;
     }
-    custom[cf.fieldKey] = v;
+    rawCustom[cf.fieldKey] = v;
   }
+  const custom = withSlotCustomKeys(rawCustom, legacyMap);
 
   // ── Functions (sub-events) ──
   const functions = (event.functions || []).map(fn => {
@@ -387,9 +488,10 @@ function buildInvitationData(event) {
   const template_version_label = tv?.versionNumber != null ? `v${tv.versionNumber}` : '';
 
   return {
-    // Backward-compat flat vars (still work in existing templates)
-    bride_name:    event.brideName  || peopleFlatVars.bride_name  || '',
-    groom_name:    event.groomName  || peopleFlatVars.groom_name  || '',
+    // Old names first, so nothing current can be shadowed by an alias.
+    ...legacyVars,
+
+    ...coupleNameVars(coupleNamesFrom(event, legacyMap), peopleFlatVars, legacyMap),
     venue_name:    event.functions?.[0]?.venueName || '',
     venue_address: event.functions?.[0]?.venueAddress || '',
     language:      event.language || 'en',
@@ -413,7 +515,7 @@ function buildInvitationData(event) {
     ganesh_image_url: ganeshImageUrl,
     media_slots,
 
-    // Spread all flat people vars so {{bride_father_name}}, {{retiree_name}} etc. work
+    // Spread all flat people vars so {{person2_father_name}}, {{retiree_name}} etc. work
     ...peopleFlatVars,
 
     // Spread all custom fields so {{love_story}}, {{hashtag}} etc. work directly
@@ -482,24 +584,28 @@ function buildDemoMediaSlotFlat(demoUrls) {
 /**
  * Build the data object for a template's live demo.
  * Now supports people and customFields from demo data.
+ *
+ * @param {object} demoData
+ * @param {{ fieldSchema?: unknown }} [options] - the schema of the version being
+ *   rendered, for its person1/person2 ↔ groom/bride slot map
  */
-function buildDemoData(demoData) {
-  // ── People from demo data ──
-  const demoPeople = (demoData.people || []).map((p, i) => ({
-    role:      p.role || `person${i + 1}`,
-    name:      p.name || '',
-    photo_url: p.photo_url || '',
-    extra:     {},
-  }));
+function buildDemoData(demoData, options = {}) {
+  const legacyMap = legacySlotMapFor(options.fieldSchema);
 
-  const peopleFlatVars = {};
-  for (const p of demoPeople) {
-    peopleFlatVars[`${p.role}_name`]  = p.name;
-    peopleFlatVars[`${p.role}_photo`] = p.photo_url;
-  }
+  // ── People from demo data ── (a demo person's Bride/Groom-style choice is
+  // set by the admin, so the storefront demo shows the template's wording)
+  const { people: demoPeople, peopleFlatVars, legacyVars } = buildPeopleVars(
+    (demoData.people || []).map((p, i) => ({
+      role:      p.role || `person${i + 1}`,
+      name:      p.name || '',
+      photo_url: p.photo_url || '',
+      extra:     p.role_choice ? { role_choice: String(p.role_choice) } : {},
+    })),
+    legacyMap,
+  );
 
   // ── Custom fields from demo data (JSON may be string; rows use key or fieldKey)
-  const custom = {};
+  const rawCustom = {};
   let demoCfRows = demoData.customFields;
   if (typeof demoCfRows === 'string') {
     try { demoCfRows = JSON.parse(demoCfRows); } catch { demoCfRows = []; }
@@ -514,8 +620,9 @@ function buildDemoData(demoData) {
       const iso = parseFlexibleDateInputToYyyyMmDd(v);
       if (iso) v = iso;
     }
-    custom[k] = v || '';
+    rawCustom[k] = v || '';
   }
+  const custom = withSlotCustomKeys(rawCustom, legacyMap);
 
   const rsvpDemo = demoData.rsvpEnabled !== false && demoData.rsvp_enabled !== false;
   const notesDemo = demoData.guestNotesEnabled !== false && demoData.guest_notes_enabled !== false;
@@ -535,9 +642,10 @@ function buildDemoData(demoData) {
     : '';
 
   return {
-    // Backward-compat flat vars
-    bride_name:    demoData.brideName  || peopleFlatVars.bride_name  || '',
-    groom_name:    demoData.groomName  || peopleFlatVars.groom_name  || '',
+    // Old names first, so nothing current can be shadowed by an alias.
+    ...legacyVars,
+
+    ...coupleNameVars(coupleNamesFrom(demoData, legacyMap), peopleFlatVars, legacyMap),
     venue_name:    demoData.venueName   || '',
     venue_address: demoData.venueAddress || '',
     language:      demoData.language || 'en',

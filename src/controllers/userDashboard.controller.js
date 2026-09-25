@@ -1,4 +1,5 @@
 const prisma  = require('../utils/prisma');
+const { Prisma } = require('@prisma/client');
 const { normalizePhone } = require('../utils/phone');
 const path    = require('path');
 const { v4: uuidv4 } = require('uuid');
@@ -15,6 +16,7 @@ const siteUrls = require('../config/siteUrls');
 const { mintInvitePreviewToken } = require('../services/previewToken');
 const { recalcTemplateRating } = require('../utils/reviewAggregates');
 const { parseFieldSchema } = require('../services/mediaSlotUtils');
+const { matchRoleOption } = require('../utils/personSlots');
 
 // ─── HELPERS ─────────────────────────────────────────────────────────────────
 
@@ -638,7 +640,7 @@ const NAMES_CONFIRMED = 'Names are confirmed. Raise a support ticket to request 
  * Decided from the template's own schema — the same `template.fieldSchema` the
  * builder reads — and never from the request. This used to trust a
  * `required: false` sent by the client, which let a crafted request edit a
- * confirmed bride or groom name.
+ * confirmed couple name.
  *
  * A role stays editable only when the schema declares it and marks it not
  * required (parents and the like). Everything else is locked once confirmed:
@@ -656,6 +658,38 @@ function lockedAfterConfirm(fieldSchema) {
       .map((p) => String(p.role).trim().toLowerCase()),
   );
   return (role) => !editable.has(String(role || '').trim().toLowerCase());
+}
+
+/** The role options the template declares for a role ([] when it declares none). */
+function roleOptionsFor(fieldSchema, role) {
+  const schema = parseFieldSchema(fieldSchema);
+  const want = String(role || '').trim().toLowerCase();
+  const row = (Array.isArray(schema?.people) ? schema.people : [])
+    .find((p) => String(p?.role || '').trim().toLowerCase() === want);
+  return Array.isArray(row?.roleOptions) ? row.roleOptions : [];
+}
+
+/**
+ * extraData with role_choice checked against the template's options for that
+ * role and stored in the declared spelling ("bride" → "Bride").
+ * @returns {{ extraData?: object|null, error?: string }}
+ */
+function normaliseRoleChoice(extraData, fieldSchema, role) {
+  if (!extraData || typeof extraData !== 'object' || !('role_choice' in extraData)) return { extraData };
+  const raw = String(extraData.role_choice ?? '').trim();
+  if (!raw) {
+    const { role_choice: _dropped, ...rest } = extraData;
+    return { extraData: Object.keys(rest).length ? rest : null };
+  }
+  const match = matchRoleOption(roleOptionsFor(fieldSchema, role), raw);
+  if (!match) return { error: `"${raw}" is not an option for this name` };
+  return { extraData: { ...extraData, role_choice: match } };
+}
+
+/** Everything in extraData apart from role_choice, for comparing two versions. */
+function extraWithoutChoice(extraData) {
+  const { role_choice: _choice, ...rest } = (extraData && typeof extraData === 'object') ? extraData : {};
+  return JSON.stringify(Object.keys(rest).sort().map((k) => [k, rest[k]]));
 }
 
 /** The event with what the people handlers need to decide, or null. */
@@ -687,8 +721,11 @@ async function addPerson(req, res) {
     return res.status(403).json({ ok: false, message: NAMES_CONFIRMED });
   }
 
+  const checked = normaliseRoleChoice(extraData, event.template?.fieldSchema, role);
+  if (checked.error) return res.status(400).json({ ok: false, message: checked.error });
+
   const person = await prisma.eventPerson.create({
-    data: { eventId: req.params.id, role, name, photoUrl: photoUrl || null, extraData: extraData || null, sortOrder: sortOrder ?? 0 },
+    data: { eventId: req.params.id, role, name, photoUrl: photoUrl || null, extraData: checked.extraData || undefined, sortOrder: sortOrder ?? 0 },
   });
   return res.status(201).json({ ok: true, person });
 }
@@ -700,14 +737,30 @@ async function updatePerson(req, res) {
   const existing = await loadPersonOfEvent(event.id, req.params.pid);
   if (!existing) return res.status(404).json({ ok: false, message: 'Person not found' });
 
-  const { role, name, photoUrl, extraData, sortOrder } = req.body || {};
+  const { role, name, photoUrl, sortOrder } = req.body || {};
+
+  let { extraData } = req.body || {};
+  if (extraData !== undefined) {
+    const checked = normaliseRoleChoice(extraData, event.template?.fieldSchema, role ?? existing.role);
+    if (checked.error) return res.status(400).json({ ok: false, message: checked.error });
+    extraData = checked.extraData;
+  }
 
   if (event.namesAreFrozen) {
     const isLocked = lockedAfterConfirm(event.template?.fieldSchema);
     // Both the role it has and the role it would get: an optional person must
     // not be renamed into a locked role, nor a locked one out of it.
     if (isLocked(existing.role) || (role !== undefined && isLocked(role))) {
-      return res.status(403).json({ ok: false, message: NAMES_CONFIRMED });
+      // Confirming locks the name, not the Bride/Groom-style choice: a request
+      // that changes nothing but extraData.role_choice still goes through.
+      const choiceOnly =
+        (role === undefined || role === existing.role)
+        && (name === undefined || name === existing.name)
+        && photoUrl === undefined
+        && (sortOrder === undefined || sortOrder === existing.sortOrder)
+        && extraData !== undefined
+        && extraWithoutChoice(extraData) === extraWithoutChoice(existing.extraData);
+      if (!choiceOnly) return res.status(403).json({ ok: false, message: NAMES_CONFIRMED });
     }
   }
 
@@ -715,7 +768,7 @@ async function updatePerson(req, res) {
   if (role !== undefined)      data.role      = role;
   if (name !== undefined)      data.name      = name;
   if (photoUrl !== undefined)  data.photoUrl  = photoUrl;
-  if (extraData !== undefined) data.extraData = extraData;
+  if (extraData !== undefined) data.extraData = extraData ?? Prisma.DbNull;
   if (sortOrder !== undefined) data.sortOrder = sortOrder;
 
   const person = await prisma.eventPerson.update({ where: { id: existing.id }, data });
@@ -1108,7 +1161,7 @@ async function createTicket(req, res) {
     include: {
       messages: true,
       user:  { select: { username: true, email: true } },
-      event: { select: { slug: true, brideName: true, groomName: true } },
+      event: { select: { slug: true, person1Name: true, person2Name: true } },
     },
   });
 
@@ -1138,7 +1191,7 @@ async function notifyTicketRaised(ticket) {
   const raisedAt = new Date(ticket.createdAt).toLocaleString('en-IN', {
     dateStyle: 'medium', timeStyle: 'short',
   });
-  const coupleNames = [ticket.event?.groomName, ticket.event?.brideName].filter(Boolean).join(' & ');
+  const coupleNames = [ticket.event?.person1Name, ticket.event?.person2Name].filter(Boolean).join(' & ');
 
   await Promise.allSettled([
     sendAdminTicketRaisedEmail({
@@ -1242,7 +1295,7 @@ async function replyToTicket(req, res) {
     where:   { id: req.params.id },
     include: {
       user:  { select: { username: true, email: true } },
-      event: { select: { slug: true, brideName: true, groomName: true } },
+      event: { select: { slug: true, person1Name: true, person2Name: true } },
     },
   });
   // Same shape as getTicket: someone else's ticket is indistinguishable from a
@@ -1273,7 +1326,7 @@ async function replyToTicket(req, res) {
 
 /** Team alert that a customer has replied and is waiting on an answer. */
 async function notifyTicketReply(ticket, body) {
-  const coupleNames = [ticket.event?.groomName, ticket.event?.brideName].filter(Boolean).join(' & ');
+  const coupleNames = [ticket.event?.person1Name, ticket.event?.person2Name].filter(Boolean).join(' & ');
   await sendAdminTicketReplyEmail({
     ticketRef: ticketReference(ticket.id),
     ticketId:  ticket.id,

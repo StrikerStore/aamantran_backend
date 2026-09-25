@@ -124,8 +124,11 @@ model TemplateDemoData {
   id           String   @id @default(uuid())
   templateId   String   @unique
   template     Template @relation(fields: [templateId], references: [id], onDelete: Cascade)
-  brideName    String
-  groomName    String
+  person1Name  String   @default("")
+  person2Name  String   @default("")
+  // Pre-rename columns, kept one release for rollback; nothing writes them. Drop next release.
+  brideName    String   @default("")
+  groomName    String   @default("")
   weddingDate  String
   venueName    String
   venueAddress String?
@@ -251,6 +254,9 @@ model Event {
   templateVersion   TemplateVersion? @relation("EventTemplateVersion", fields: [templateVersionId], references: [id], onDelete: SetNull)
   community    String
   eventType    String
+  person1Name  String?
+  person2Name  String?
+  // Pre-rename columns, kept one release for rollback; nothing writes them. Drop next release.
   brideName    String?
   groomName    String?
   namesAreFrozen Boolean @default(false)
@@ -315,11 +321,12 @@ model EventPerson {
   id        String  @id @default(uuid())
   eventId   String
   event     Event   @relation(fields: [eventId], references: [id], onDelete: Cascade)
-  role      String  // bride, groom, bride_father, groom_father, bride_mother, groom_mother,
+  role      String  // person1, person2, person1_father, person2_mother, person1_grandfather,
                     // birthday_person, retiree, host, celebrant, etc.
   name      String
   photoUrl  String?
-  extraData Json?   // any role-specific data (e.g. bio, relationship, subtitle)
+  extraData Json?   // any role-specific data (e.g. bio, subtitle); role_choice = the couple's
+                    // pick from the template's roleOptions for this name (e.g. "Bride")
   sortOrder Int     @default(0)
 
   @@index([eventId])
@@ -650,7 +657,7 @@ model Task {
   category   String   @default("Other")   // Venue, Catering, Photography, Attire, Invitations, Decor, Travel, Other
   dueDate    String?                       // YYYY-MM-DD (frontend sends/reads as string)
   priority   String   @default("medium")   // low, medium, high
-  assignedTo String?                       // bride, groom, family, vendor
+  assignedTo String?                       // person1, person2, family, vendor (older rows: bride/groom = whoever picked that role)
   status     String   @default("todo")     // todo, inprogress, done
   notes      String?  @db.Text
   createdAt  DateTime @default(now())

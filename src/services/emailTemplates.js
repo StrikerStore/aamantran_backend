@@ -247,7 +247,7 @@ function templateChangedHtml({ fromTemplateName, toTemplateName, dashboardUrl })
 
     <p style="margin:0 0 8px;font-size:14px;color:#5a3a3a;"><strong>✅ What we kept for you:</strong></p>
     <ul style="margin:0 0 20px;padding-left:20px;color:#5a3a3a;font-size:14px;line-height:2;">
-      <li>Names (Bride, Groom &amp; family members)</li>
+      <li>Names (the couple &amp; family members)</li>
       <li>Event functions &amp; ceremony details</li>
       <li>Venues &amp; map links</li>
       <li>Language preference</li>

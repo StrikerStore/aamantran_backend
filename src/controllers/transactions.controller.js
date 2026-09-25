@@ -113,7 +113,7 @@ async function list(req, res) {
       include: {
         user:     { select: { id: true, username: true, email: true } },
         template: { select: { id: true, name: true } },
-        event:    { select: { id: true, slug: true, brideName: true, groomName: true } },
+        event:    { select: { id: true, slug: true, person1Name: true, person2Name: true } },
       },
     }),
     prisma.payment.count({ where }),
@@ -251,7 +251,7 @@ async function get(req, res) {
     include: {
       user:     { select: { id: true, username: true, email: true, phone: true, phoneCountryCode: true } },
       template: { select: { id: true, name: true, slug: true, price: true } },
-      event:    { select: { id: true, slug: true, brideName: true, groomName: true, isPublished: true } },
+      event:    { select: { id: true, slug: true, person1Name: true, person2Name: true, isPublished: true } },
     },
   });
 

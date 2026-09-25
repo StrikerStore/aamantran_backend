@@ -16,6 +16,7 @@
  * the happy path.
  */
 const prisma = require('../utils/prisma');
+const { parseSchema, parseRoleOptions } = require('../utils/personSlots');
 
 /** Photos used when the template declares a photo slot. Public, royalty-free. */
 const STOCK_PHOTOS = [
@@ -31,17 +32,30 @@ const STOCK_PHOTOS = [
  * resolve. Templates that use only a subset simply ignore the extras.
  */
 const PEOPLE = [
-  { role: 'groom',              name: 'Arjun Sharma' },
-  { role: 'bride',              name: 'Meera Nair' },
-  { role: 'groom_father',       name: 'Rajesh Sharma' },
-  { role: 'groom_mother',       name: 'Sunita Sharma' },
-  { role: 'bride_father',       name: 'Vikram Nair' },
-  { role: 'bride_mother',       name: 'Latha Nair' },
-  { role: 'groom_grandfather',  name: 'Mohanlal Sharma' },
-  { role: 'groom_grandmother',  name: 'Kamala Sharma' },
-  { role: 'bride_grandfather',  name: 'Raman Nair' },
-  { role: 'bride_grandmother',  name: 'Sarojini Nair' },
+  { role: 'person1',              name: 'Arjun Sharma' },
+  { role: 'person2',              name: 'Meera Nair' },
+  { role: 'person1_father',       name: 'Rajesh Sharma' },
+  { role: 'person1_mother',       name: 'Sunita Sharma' },
+  { role: 'person2_father',       name: 'Vikram Nair' },
+  { role: 'person2_mother',       name: 'Latha Nair' },
+  { role: 'person1_grandfather',  name: 'Mohanlal Sharma' },
+  { role: 'person1_grandmother',  name: 'Kamala Sharma' },
+  { role: 'person2_grandfather',  name: 'Raman Nair' },
+  { role: 'person2_grandmother',  name: 'Sarojini Nair' },
 ];
+
+/**
+ * A seeded Bride/Groom-style choice, so a template's wording for it shows in
+ * the sandbox: person N takes the Nth option declared for it ("Groom, Bride" →
+ * person1 Groom, person2 Bride), else the first.
+ */
+function seededRoleChoice(fieldSchema, role) {
+  const m = /^person(\d+)$/.exec(role);
+  if (!m) return '';
+  const row = (Array.isArray(fieldSchema?.people) ? fieldSchema.people : []).find((p) => p?.role === role);
+  const options = parseRoleOptions(row?.roleOptions);
+  return options[Number(m[1]) - 1] || options[0] || '';
+}
 
 const VENUES = [
   { name: 'Green Lawns',        address: 'MG Road, Pune 411001',   mapUrl: 'https://maps.google.com/?q=Green+Lawns+Pune' },
@@ -255,10 +269,15 @@ async function seedSandboxContent({ eventId, fieldSchema, preset = 'full', music
   const weddingDate = baseWeddingDate();
 
   // ── People ──
+  const schema = parseSchema(fieldSchema);
   await prisma.eventPerson.createMany({
-    data: PEOPLE.map((p, i) => ({
-      eventId, role: p.role, name: p.name, photoUrl: null, sortOrder: i,
-    })),
+    data: PEOPLE.map((p, i) => {
+      const roleChoice = seededRoleChoice(schema, p.role);
+      return {
+        eventId, role: p.role, name: p.name, photoUrl: null, sortOrder: i,
+        ...(roleChoice && { extraData: { role_choice: roleChoice } }),
+      };
+    }),
   });
 
   // ── Venues, then functions that point at them ──
@@ -324,8 +343,8 @@ async function seedSandboxContent({ eventId, fieldSchema, preset = 'full', music
   await prisma.event.update({
     where: { id: eventId },
     data: {
-      groomName:         'Arjun',
-      brideName:         'Meera',
+      person1Name:       'Arjun',
+      person2Name:       'Meera',
       instagramUrl:      cfg.links ? LINKS.instagramUrl : null,
       instagramHashtag:  cfg.links ? LINKS.instagramHashtag : null,
       socialYoutubeUrl:  cfg.links ? LINKS.socialYoutubeUrl : null,

@@ -92,10 +92,38 @@ function resolveFunctionVenueMap(fn) {
   return { venueLat: lat, venueLng: lng, venueMapUrl };
 }
 
-// GET /api/v1/users
+/**
+ * The designs a user has: from their events (a paired invite counts once),
+ * else from what they bought but have not set up yet.
+ */
+function templateNamesOf(user) {
+  const fromEvents = (user.events || []).map((e) => e.template?.name).filter(Boolean);
+  const names = fromEvents.length ? fromEvents : (user.payments || []).map((p) => p.template?.name).filter(Boolean);
+  return [...new Set(names)];
+}
+
+const USER_TEMPLATE_SELECT = {
+  events:   { select: { template: { select: { name: true } } }, orderBy: { createdAt: 'asc' } },
+  payments: { select: { template: { select: { name: true } } }, orderBy: { createdAt: 'asc' } },
+};
+
+// Columns the admin table can sort by → Prisma orderBy. `template` is sorted
+// in memory (see list), since a user can have several.
+const USER_SORTS = {
+  username: (dir) => [{ username: dir }, { createdAt: 'desc' }],
+  email:    (dir) => [{ email: dir }],
+  phone:    (dir) => [{ phone: dir }, { createdAt: 'desc' }],
+  events:   (dir) => [{ events: { _count: dir } }, { createdAt: 'desc' }],
+  payments: (dir) => [{ payments: { _count: dir } }, { createdAt: 'desc' }],
+  joined:   (dir) => [{ createdAt: dir }],
+};
+
+// GET /api/v1/users?sort=username|email|phone|template|events|payments|joined&dir=asc|desc
 async function list(req, res) {
   const { search, page = 1, limit = 20, includeTest } = req.query;
   const skip = (Number(page) - 1) * Number(limit);
+  const sort = (USER_SORTS[req.query.sort] || req.query.sort === 'template') ? String(req.query.sort) : 'joined';
+  const dir = req.query.dir === 'asc' ? 'asc' : 'desc';
 
   const where = search
     ? { OR: [
@@ -109,22 +137,46 @@ async function list(req, res) {
   // hiding the test account by default keeps that number honest too.
   if (includeTest !== '1') where.isTestAccount = false;
 
+  const select = {
+    id: true, email: true, username: true, phone: true, phoneCountryCode: true, createdAt: true,
+    isTestAccount: true,
+    _count: { select: { events: true, payments: true } },
+    ...USER_TEMPLATE_SELECT,
+  };
+  const shape = ({ events: _events, payments: _payments, ...u }, names) => ({ ...u, templates: names });
+
+  if (sort === 'template') {
+    // A user's designs live on their events, which Prisma cannot order by. Rank
+    // every matching user by design name (users with none last), then load the
+    // page. Admin-sized lists only — this reads one row per user.
+    const all = await prisma.user.findMany({ where, select: { id: true, createdAt: true, ...USER_TEMPLATE_SELECT } });
+    const ranked = all
+      .map((u) => ({ id: u.id, createdAt: u.createdAt, key: templateNamesOf(u).join(', ').toLowerCase() }))
+      .sort((a, b) => {
+        if (!a.key !== !b.key) return a.key ? -1 : 1;
+        const byName = a.key.localeCompare(b.key);
+        if (byName) return dir === 'asc' ? byName : -byName;
+        return b.createdAt - a.createdAt;
+      });
+    const ids = ranked.slice(skip, skip + Number(limit)).map((r) => r.id);
+    const rows = await prisma.user.findMany({ where: { id: { in: ids } }, select });
+    const byId = new Map(rows.map((u) => [u.id, u]));
+    const data = ids.map((id) => byId.get(id)).filter(Boolean).map((u) => shape(u, templateNamesOf(u)));
+    return res.json({ ok: true, data, total: all.length, page: Number(page), limit: Number(limit) });
+  }
+
   const [users, total] = await Promise.all([
     prisma.user.findMany({
       where,
       skip,
       take:    Number(limit),
-      orderBy: { createdAt: 'desc' },
-      select: {
-        id: true, email: true, username: true, phone: true, phoneCountryCode: true, createdAt: true,
-        isTestAccount: true,
-        _count: { select: { events: true, payments: true } },
-      },
+      orderBy: USER_SORTS[sort](dir),
+      select,
     }),
     prisma.user.count({ where }),
   ]);
 
-  res.json({ ok: true, data: users, total, page: Number(page), limit: Number(limit) });
+  res.json({ ok: true, data: users.map((u) => shape(u, templateNamesOf(u))), total, page: Number(page), limit: Number(limit) });
 }
 
 // GET /api/v1/users/:id
@@ -166,8 +218,8 @@ async function generatePairedInvites(req, res) {
   const {
     paymentId,
     templateId: templateIdBody,
-    brideName,
-    groomName,
+    person1Name,
+    person2Name,
     eventType = 'wedding',
     community = 'universal',
     language = 'en',
@@ -229,7 +281,7 @@ async function generatePairedInvites(req, res) {
   }
 
   const pairId = crypto.randomUUID();
-  const baseSlug = slugifyBase(`${brideName || ''}-${groomName || ''}-${Date.now().toString(36)}`);
+  const baseSlug = slugifyBase(`${person1Name || ''}-${person2Name || ''}-${Date.now().toString(36)}`);
 
   const slugFull = await ensureUniqueEventSlug(
     slugFullIn ? slugifyBase(String(slugFullIn)) : `${baseSlug}-all`,
@@ -248,8 +300,8 @@ async function generatePairedInvites(req, res) {
           templateVersionId: tpl.currentVersionId || null,
           community,
           eventType,
-          brideName:    brideName || null,
-          groomName:    groomName || null,
+          person1Name:  person1Name || null,
+          person2Name:  person2Name || null,
           language,
           inviteScope:  'full',
           invitePairId: pairId,
@@ -264,8 +316,8 @@ async function generatePairedInvites(req, res) {
           templateVersionId: tpl.currentVersionId || null,
           community,
           eventType,
-          brideName:    brideName || null,
-          groomName:    groomName || null,
+          person1Name:  person1Name || null,
+          person2Name:  person2Name || null,
           language,
           inviteScope:  'subset',
           invitePairId: pairId,
@@ -333,7 +385,7 @@ async function generatePairedInvites(req, res) {
                 role:      String(p.role || 'guest'),
                 name:      String(p.name || ''),
                 photoUrl:  p.photoUrl || null,
-                extraData: p.extraData || null,
+                extraData: p.extraData || undefined,
                 sortOrder: p.sortOrder ?? i,
               },
             });
@@ -451,7 +503,7 @@ async function freezeNames(req, res) {
 // PUT /api/v1/users/:id/event-data
 // Admin edits any field on a couple's Event + Functions + Media + People + Venues + Custom Fields
 async function updateEventData(req, res) {
-  const { eventId, brideName, groomName, language, isPublished, slug, eventType, community,
+  const { eventId, person1Name, person2Name, language, isPublished, slug, eventType, community,
           functions, media, people, venues, customFields,
           instagramUrl, instagramHashtag, socialYoutubeUrl, websiteUrl, rsvpEnabled, guestNotesEnabled } = req.body;
 
@@ -466,8 +518,8 @@ async function updateEventData(req, res) {
   const updated = await prisma.event.update({
     where: { id: eventId },
     data: {
-      ...(brideName   !== undefined && { brideName }),
-      ...(groomName   !== undefined && { groomName }),
+      ...(person1Name !== undefined && { person1Name }),
+      ...(person2Name !== undefined && { person2Name }),
       ...(language    !== undefined && { language }),
       ...(isPublished !== undefined && { isPublished }),
       ...(slug        !== undefined && { slug }),
@@ -569,16 +621,22 @@ async function updateEventData(req, res) {
 
   // ── Replace people (delete all + re-create) ──
   if (Array.isArray(people)) {
+    // A client that leaves extraData out must not wipe it — the couple's
+    // Bride/Groom-style choice lives there. Carry it over by role.
+    const previous = await prisma.eventPerson.findMany({ where: { eventId }, select: { role: true, extraData: true } });
+    const previousExtra = new Map(previous.map((p) => [p.role, p.extraData]));
     await prisma.eventPerson.deleteMany({ where: { eventId } });
     for (let i = 0; i < people.length; i++) {
       const p = people[i];
+      const role = String(p.role || 'guest');
+      const extraData = p.extraData !== undefined ? p.extraData : previousExtra.get(role);
       await prisma.eventPerson.create({
         data: {
           eventId,
-          role:      String(p.role || 'guest'),
+          role,
           name:      String(p.name || ''),
           photoUrl:  p.photoUrl || null,
-          extraData: p.extraData || null,
+          extraData: extraData || undefined,
           sortOrder: p.sortOrder ?? i,
         },
       });

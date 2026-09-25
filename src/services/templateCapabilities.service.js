@@ -29,7 +29,7 @@ const CACHE_MAX_ENTRIES    = 200;
 const cache = new Map();
 
 /**
- * Readable fallback for a schema row with no label: "groom_father" and
+ * Readable fallback for a schema row with no label: "person1_father" and
  * "dressCode" both become sentence case. Keys are internal identifiers, so a
  * raw key must never reach a buyer.
  */

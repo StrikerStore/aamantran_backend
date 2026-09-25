@@ -13,6 +13,9 @@
  * must not be able to block a developer.
  */
 const { readTemplateHtml, draftFolderName } = require('./fileManager');
+const {
+  legacySlotMapFor, toPersonKey, parseRoleOptions, roleOptionSlug,
+} = require('../utils/personSlots');
 
 /**
  * Variables the renderer always provides (services/templateRenderer.js).
@@ -20,6 +23,9 @@ const { readTemplateHtml, draftFolderName } = require('./fileManager');
  * reported as undeclared.
  */
 const BUILT_IN_VARS = new Set([
+  'person1_name', 'person2_name',
+  // Old names of the two above, still answered while templates are migrated.
+  // Reported separately as legacy (see LEGACY_SLOT_TOKEN).
   'bride_name', 'groom_name',
   'venue_name', 'venue_address',
   'language', 'invite_url',
@@ -71,7 +77,17 @@ function extractExpressions(html) {
  * schema is consulted first and this vocabulary only breaks ties for tokens the
  * schema does not mention.
  */
-const RELATION_WORDS = /(?:^|_)(?:bride|groom|father|mother|grandfather|grandmother|grandparent|parent|brother|sister|sibling|uncle|aunt|cousin|host|celebrant|retiree|birthday|couple|partner|spouse|witness|bestman|bridesmaid|groomsman)(?:_|$)/;
+const RELATION_WORDS = /(?:^|_)(?:person\d+|bride|groom|father|mother|grandfather|grandmother|grandparent|parent|brother|sister|sibling|uncle|aunt|cousin|host|celebrant|retiree|birthday|couple|partner|spouse|witness|bestman|bridesmaid|groomsman)(?:_|$)/;
+
+/**
+ * Per-person variables derived from a role (templateRenderer buildPeopleVars):
+ * {{person1_role}}, {{person2_is_bride}}, {{person1_has_parents}}.
+ * Captures the role prefix.
+ */
+const ROLE_CHOICE_TOKEN = /^([a-z0-9_]+?)_(?:role|has_parents|is_[a-z0-9_]+)$/;
+
+/** A key built on a pre-rename slot name: groom, bride_father, groom_family_line… */
+const LEGACY_SLOT_TOKEN = /^(?:groom|bride)(?:_|$)/;
 
 /**
  * Roles referenced through helpers or the flat {{role_name}} / {{role_photo}} form.
@@ -90,7 +106,14 @@ function extractRoles(html, expressions, declaredRoles = [], declaredCustom = []
 
   // Flat form: {{groom_father_name}} / {{bride_photo}}.
   for (const expr of expressions) {
-    const token = expr.replace(/^[#/^]/, '').split(/\s+/)[0];
+    const parts = expr.replace(/^[#/^]/, '').split(/\s+/);
+    // {{#if person1_is_bride}} names its role in the argument, not the helper.
+    const token = ['if', 'unless', 'with'].includes(parts[0]) && parts.length === 2 ? parts[1] : parts[0];
+    const choice = ROLE_CHOICE_TOKEN.exec(token);
+    if (choice && (declaredRoles.includes(choice[1]) || /^person\d+(?:_|$)/.test(choice[1]))) {
+      roles.add(choice[1]);
+      continue;
+    }
     const hit = /^([a-z0-9_]+)_(name|photo)$/.exec(token);
     if (!hit || BUILT_IN_VARS.has(token)) continue;
 
@@ -138,6 +161,11 @@ function extractCustomKeys(expressions, roles, html) {
     roleDerived.add(`${role}_name`);
     roleDerived.add(`${role}_photo`);
   }
+  const isRoleDerived = (token) => {
+    if (roleDerived.has(token)) return true;
+    const choice = ROLE_CHOICE_TOKEN.exec(token);
+    return Boolean(choice && roles.has(choice[1]));
+  };
 
   for (const expr of expressions) {
     if (/^[/>]/.test(expr)) continue;                 // closers and partials
@@ -163,7 +191,7 @@ function extractCustomKeys(expressions, roles, html) {
     if (!/^[a-zA-Z_][a-zA-Z0-9_]*$/.test(token)) continue;   // @index, this.x, paths
     if (BUILT_IN_VARS.has(token)) continue;
     if (KNOWN_HELPERS.has(token)) continue;
-    if (roleDerived.has(token)) continue;
+    if (isRoleDerived(token)) continue;
     if (/^media_[a-zA-Z0-9_]+_url$/.test(token)) continue;
 
     keys.add(token);
@@ -221,8 +249,61 @@ async function checkSchemaAgainstHtml(template, fieldSchema) {
   const declaredRoles  = declaredList(fieldSchema, 'people', 'role');
   const declaredSlots  = declaredList(fieldSchema, 'mediaSlots', 'key');
 
-  const used = analyseHtml(html, { declaredRoles, declaredCustom });
+  const rawUsed = analyseHtml(html, { declaredRoles, declaredCustom });
   const warnings = [];
+
+  // Old slot names still render (the renderer aliases them), so they count as
+  // the person1/person2 key they stand for — but each one is flagged, since the
+  // aliases go away once every design is migrated.
+  const slotMap = legacySlotMapFor(fieldSchema);
+  const legacySeen = new Map();
+  const normalise = (key) => {
+    const next = toPersonKey(key, slotMap);
+    if (next !== key) legacySeen.set(key, next);
+    return next;
+  };
+  const used = {
+    ...rawUsed,
+    roles: [...new Set(rawUsed.roles.map(normalise))].sort(),
+    customKeys: [...new Set(rawUsed.customKeys.map(normalise))].sort(),
+  };
+  for (const expr of extractExpressions(stripHandlebarsComments(html))) {
+    for (const token of expr.replace(/^[#/^]/, '').split(/\s+/)) {
+      const bare = token.replace(/^"|"$/g, '');
+      if (LEGACY_SLOT_TOKEN.test(bare) && /^[a-z0-9_]+$/.test(bare)) normalise(bare);
+    }
+  }
+  for (const [old, next] of legacySeen) {
+    warnings.push({
+      level: 'warn',
+      kind:  'legacy-slot-name',
+      key:   old,
+      message: `"${old}" uses the old slot name — use "${next}". It still renders for now, but support for the old names will be removed.`,
+    });
+  }
+
+  // {{person1_is_bride}} only ever turns true if "Bride" is one of that name's
+  // role options in the admin.
+  const optionSlugs = new Map();
+  for (const p of (Array.isArray(fieldSchema?.people) ? fieldSchema.people : [])) {
+    if (p?.role) optionSlugs.set(String(p.role), parseRoleOptions(p.roleOptions).map(roleOptionSlug));
+  }
+  const checkedChoices = new Set();
+  for (const expr of extractExpressions(stripHandlebarsComments(html))) {
+    for (const token of expr.replace(/^[#/^]/, '').split(/\s+/)) {
+      const m = /^([a-z0-9_]+?)_is_([a-z0-9_]+)$/.exec(normalise(token));
+      if (!m || checkedChoices.has(m[0]) || !optionSlugs.has(m[1])) continue;
+      checkedChoices.add(m[0]);
+      if (!optionSlugs.get(m[1]).includes(m[2])) {
+        warnings.push({
+          level: 'warn',
+          kind:  'role-option-unknown',
+          key:   m[0],
+          message: `{{${m[0]}}} can never be true: "${m[2]}" is not one of the role options declared for "${m[1]}".`,
+        });
+      }
+    }
+  }
 
   // ── Used but not declared: renders blank in production ──
   for (const key of used.customKeys.filter((k) => !declaredCustom.includes(k))) {

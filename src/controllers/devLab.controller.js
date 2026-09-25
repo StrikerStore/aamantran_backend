@@ -23,6 +23,7 @@ const { mintInvitePreviewToken } = require('../services/previewToken');
 const { purgeTestEvents } = require('../services/testAccount.service');
 const { PRESETS, seedSandboxContent, musicSlotKey } = require('../services/sandboxSeed.service');
 const { checkSchemaAgainstHtml } = require('../services/templateIntrospect.service');
+const { normalizeFieldSchema } = require('../utils/personSlots');
 
 const DEFAULT_PRESET = 'full';
 
@@ -53,8 +54,8 @@ function shapeEvent(event) {
     id:          event.id,
     slug:        event.slug,
     isPublished: event.isPublished,
-    groomName:   event.groomName,
-    brideName:   event.brideName,
+    person1Name: event.person1Name,
+    person2Name: event.person2Name,
     template:    event.template
       ? { id: event.template.id, name: event.template.name, slug: event.template.slug }
       : null,
@@ -185,7 +186,7 @@ async function createTemplate(req, res) {
   let fieldSchema = null;
   if (req.body?.fieldSchema) {
     try {
-      fieldSchema = JSON.parse(req.body.fieldSchema);
+      fieldSchema = normalizeFieldSchema(JSON.parse(req.body.fieldSchema), null);
     } catch {
       return res.status(400).json({ ok: false, message: 'fieldSchema is not valid JSON' });
     }
@@ -291,6 +292,9 @@ async function putSchema(req, res) {
     }
   }
 
+  // Old groom/bride roles become person1/person2 and the slot map is kept, so
+  // the developer's HTML keeps rendering while the Lab flags the old names.
+  fieldSchema = fieldSchema ? normalizeFieldSchema(fieldSchema, template.fieldSchema) : null;
   await prisma.template.update({
     where: { id: template.id },
     data:  { fieldSchema: fieldSchema ?? null },
@@ -381,23 +385,27 @@ async function getSandbox(req, res) {
 }
 
 // PUT /api/dev/sandbox
-// Body: { groomName?, brideName?, links?, toggles?, customFields?, musicUrl?, publish? }
+// Body: { person1Name?, person2Name?, links?, toggles?, customFields?, musicUrl?, publish? }
+// (groomName/brideName are still read as person1/person2 for a Lab tab opened before the rename.)
 async function putSandbox(req, res) {
   const event = await findSandboxEvent(req.dev);
   if (!event) {
     return res.status(404).json({ ok: false, message: 'No template is active in your sandbox yet' });
   }
 
-  const { groomName, brideName, links = {}, toggles = {}, customFields, musicUrl, publish } = req.body || {};
+  const body = req.body || {};
+  const { links = {}, toggles = {}, customFields, musicUrl, publish } = body;
+  const person1Name = body.person1Name !== undefined ? body.person1Name : body.groomName;
+  const person2Name = body.person2Name !== undefined ? body.person2Name : body.brideName;
 
   const data = {};
-  if (groomName !== undefined) data.groomName = String(groomName).slice(0, 120) || null;
-  if (brideName !== undefined) data.brideName = String(brideName).slice(0, 120) || null;
+  if (person1Name !== undefined) data.person1Name = String(person1Name).slice(0, 120) || null;
+  if (person2Name !== undefined) data.person2Name = String(person2Name).slice(0, 120) || null;
 
-  // The renderer reads {{groom_name}} from the Event column but {{person_name}}
+  // The renderer reads {{person1_name}} from the Event column but {{person_name}}
   // and {{#person}} from the people rows, so both have to move together or the
   // template shows two different names for the same person.
-  for (const [role, value] of [['groom', groomName], ['bride', brideName]]) {
+  for (const [role, value] of [['person1', person1Name], ['person2', person2Name]]) {
     if (value === undefined) continue;
     await prisma.eventPerson.updateMany({
       where: { eventId: event.id, role },

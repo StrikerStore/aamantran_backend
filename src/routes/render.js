@@ -6,6 +6,7 @@ const { renderTemplate, buildInvitationData, buildDemoData, pickShareImage, inje
 const { getAamantranSdkScript } = require('../services/aamantranSdk');
 const { storefrontFromRequest, landingUrlFor, normalizeStorefront } = require('../utils/storefront');
 const { LINK_MINUTES, findTrialForRender, overlayTrialOnDemoData } = require('../services/trialDemo.service');
+const { legacySlotMapFor } = require('../utils/personSlots');
 
 const router = express.Router();
 
@@ -177,7 +178,7 @@ function escapeHtml(value) {
 /**
  * Removes share-card and description tags a template declares.
  *
- * Templates commonly fill og:title with {{bride_name}} & {{groom_name}}. For a
+ * Templates commonly fill og:title with {{person1_name}} & {{person2_name}}. For a
  * personal demo that would hand the visitor's names to WhatsApp's (or anyone's)
  * link-preview scraper, which keeps its own copy long after our 24 hours are up.
  * Generic tags are injected in their place.
@@ -367,7 +368,8 @@ router.get('/demo/:slug', async (req, res) => {
   if (template.sandboxOwnerId) return res.status(404).send('<h1>Template not found</h1>');
   if (!template.demoData) return res.status(404).send('<h1>No demo data configured for this template</h1>');
 
-  const data = buildDemoData(template.demoData);
+  // The draft is rendered, so the draft's schema holds its slot map.
+  const data = buildDemoData(template.demoData, { fieldSchema: template.fieldSchema });
   const variant = detectVariant(req);
   // Demo always renders the latest draft so admins see their in-progress edits
   // immediately. Published versions are only used by live invites.
@@ -431,8 +433,9 @@ router.get('/try/:token', async (req, res) => {
       }));
     }
 
-    const demo = overlayTrialOnDemoData(template.demoData, trial.payload);
-    const data = buildDemoData(demo);
+    const renderedSchema = template.currentVersion?.fieldSchema ?? template.fieldSchema;
+    const demo = overlayTrialOnDemoData(template.demoData, trial.payload, legacySlotMapFor(renderedSchema));
+    const data = buildDemoData(demo, { fieldSchema: renderedSchema });
     const variant = detectVariant(req);
     // Render what a buyer would get — the published version — rather than the
     // draft /demo shows admins. Draft only for a design published before
@@ -533,13 +536,13 @@ router.get('/i/:slug', async (req, res) => {
         desktopEntryFile: event.template.desktopEntryFile,
         mobileEntryFile:  event.template.mobileEntryFile,
       };
-  // Link-preview card for WhatsApp and friends. Groom first, and the first
+  // Link-preview card for WhatsApp and friends. Person 1 first, and the first
   // ceremony's date in IST — the same order and date as the dashboard's share
   // caption, so the card and the message under it agree. No venue: the caption
   // drops it whenever ceremonies span venues. The image prefers the couple's
   // uploaded WhatsApp share photo.
   const shareNames =
-    [data.groom_name, data.bride_name].filter(Boolean).join(' & ')
+    [data.person1_name, data.person2_name].filter(Boolean).join(' & ')
     || (event.people || []).slice(0, 2).map((p) => p.name).filter(Boolean).join(' & ');
   const firstFnDate = event.functions?.[0]?.date;
   const shareDetails = firstFnDate

@@ -24,6 +24,7 @@ const siteUrls = require('../config/siteUrls');
 const { EXCLUDE_SANDBOX_TEMPLATE } = require('../utils/testFilters');
 const { normalizeStorefront } = require('../utils/storefront');
 const { parseFieldSchema } = require('./mediaSlotUtils');
+const { DEFAULT_LEGACY_SLOT_MAP, legacySlotMapFor, toPersonKey } = require('../utils/personSlots');
 
 /** How long the shareable link works. */
 const LINK_MINUTES = Number(process.env.TRIAL_DEMO_LINK_MINUTES || 15);
@@ -67,7 +68,7 @@ const MAX_TRIAL_PEOPLE = 3;
 /** Events a design may offer. */
 const MAX_OFFERED_CEREMONIES = 10;
 const MAX_CEREMONY_NAME = 60;
-/** A role key as the builder and the renderer use it: "bride", "birthday_person". */
+/** A role key as the builder and the renderer use it: "person1", "birthday_person". */
 const ROLE_RE = /^[a-z][a-z0-9_]{0,40}$/;
 
 /**
@@ -136,9 +137,9 @@ function schemaOf(template) {
  * The names a demo of this design asks for.
  *
  * The principals only. Roles follow the builder's prefix convention —
- * "bride_father" belongs to "bride" — so a principal is a role no other declared
- * role is a prefix of. A wedding asks for the bride and the groom; a birthday for
- * the person whose birthday it is. Parents and other family keep their sample
+ * "person2_father" belongs to "person2" — so a principal is a role no other
+ * declared role is a prefix of. A wedding asks for the couple (person1 and
+ * person2); a birthday for the person whose birthday it is. Parents and other family keep their sample
  * names, as they always have: a demo is for seeing the design with your own
  * names on it, not for filling in the whole invitation.
  *
@@ -169,8 +170,8 @@ function trialPeopleFor(template) {
     .filter((entry) => !roles.some((other) => other !== entry.role && entry.role.startsWith(`${other}_`)))
     .slice(0, MAX_TRIAL_PEOPLE);
 
-  if (!people.length && text(template.demoData?.brideName) && text(template.demoData?.groomName)) {
-    people = [{ role: 'bride', label: 'Bride', required: true }, { role: 'groom', label: 'Groom', required: true }];
+  if (!people.length && text(template.demoData?.person1Name) && text(template.demoData?.person2Name)) {
+    people = [{ role: 'person1', label: 'Person 1', required: true }, { role: 'person2', label: 'Person 2', required: true }];
   }
   if (!people.some((person) => person.required === true)) {
     people = people.map((person) => ({ ...person, required: true }));
@@ -230,9 +231,10 @@ function trialOptionsFor(template) {
  * Demos created before this change, and a browser still running the old form
  * during a deploy, send a bride, a groom and a wedding date. Those become two
  * people and an event date, so an old link keeps rendering and an old purchase
- * keeps prefilling for the 24 hours its data lives.
+ * keeps prefilling for the 24 hours its data lives. Roles still named after the
+ * old groom/bride slots are moved onto person1/person2 with the design's map.
  */
-function normalizeTrialPayload(payload) {
+function normalizeTrialPayload(payload, legacyMap = DEFAULT_LEGACY_SLOT_MAP) {
   const input = payload && typeof payload === 'object' ? payload : {};
   const listed = Array.isArray(input.people)
     ? input.people
@@ -240,7 +242,10 @@ function normalizeTrialPayload(payload) {
   return {
     ...input,
     people: listed
-      .map((person) => ({ role: String(person?.role || '').trim().toLowerCase(), name: text(person?.name) }))
+      .map((person) => ({
+        role: toPersonKey(String(person?.role || '').trim().toLowerCase(), legacyMap),
+        name: text(person?.name),
+      }))
       .filter((person) => ROLE_RE.test(person.role) && person.name),
     eventDate: text(input.eventDate || input.weddingDate),
   };
@@ -254,7 +259,7 @@ function normalizeTrialPayload(payload) {
  * so the form can point at it rather than saying "invalid". A name field is
  * reported as `people.<role>`.
  */
-function validateTrialPayload(input, { now = new Date(), options } = {}) {
+function validateTrialPayload(input, { now = new Date(), options, legacyMap } = {}) {
   const body = input && typeof input === 'object' ? input : {};
 
   // Bots fill every field, including the one no human can see.
@@ -270,7 +275,7 @@ function validateTrialPayload(input, { now = new Date(), options } = {}) {
     throw new TrialDemoError('That design cannot be previewed yet.', 'slug');
   }
 
-  const given = normalizeTrialPayload(body);
+  const given = normalizeTrialPayload(body, legacyMap);
   const byRole = new Map(given.people.map((person) => [person.role, person.name]));
   const people = [];
   for (const def of options.people) {
@@ -375,8 +380,8 @@ const TRY_ELIGIBILITY_SELECT = {
   demoData: {
     select: {
       id: true,
-      brideName: true,
-      groomName: true,
+      person1Name: true,
+      person2Name: true,
       people: true,
       functions: { select: { name: true }, orderBy: { sortOrder: 'asc' } },
     },
@@ -409,7 +414,7 @@ async function createTrialDemo({ slug, body, ip, storefront, now = new Date() })
   // Enforced here too, not only by hiding the button: the API is public.
   const options = trialOptionsFor(template);
   if (!options) throw new TrialDemoError('That design cannot be previewed yet.', 'slug');
-  const payload = validateTrialPayload(body, { now, options });
+  const payload = validateTrialPayload(body, { now, options, legacyMap: legacySlotMapFor(schemaOf(template)) });
 
   const since = new Date(now.getTime() - 60 * 60 * 1000);
   const ipHash = hashIp(ip);
@@ -547,28 +552,31 @@ function replaceAll(text, from, to) {
  * sample name left in either would silently replace the visitor's.
  *
  * Works on any role: whatever the visitor named becomes that person in
- * `people[]` and `{{role_name}}` in the custom fields. `bride` and `groom` also
+ * `people[]` and `{{role_name}}` in the custom fields. `person1` and `person2` also
  * fill the top-level couple fields older wedding templates read.
  *
  * Kept from the sample: photos, music, parents and other family, links, the
  * hashtag's shape, and each event's dress code (and its time, when the visitor
  * gave none). Replaced: the people named, the date, the venue, and the events.
  */
-function overlayTrialOnDemoData(demoData, rawPayload) {
+function overlayTrialOnDemoData(demoData, rawPayload, legacyMap = DEFAULT_LEGACY_SLOT_MAP) {
   const sample = demoData || {};
-  const payload = normalizeTrialPayload(rawPayload);
+  const payload = normalizeTrialPayload(rawPayload, legacyMap);
   const named = payload.people.map((person) => ({ role: person.role, name: inertText(person.name) })).filter((p) => p.name);
   const nameFor = (role) => named.find((person) => person.role === role)?.name || '';
   const venue = inertText(payload.venueName);
   const city = inertText(payload.city);
   const eventDate = /^\d{4}-\d{2}-\d{2}$/.test(payload.eventDate) ? payload.eventDate : '';
 
-  const people = Array.isArray(sample.people) ? sample.people : parseList(sample.people);
+  const people = (Array.isArray(sample.people) ? sample.people : parseList(sample.people))
+    .map((person) => (person && person.role
+      ? { ...person, role: toPersonKey(String(person.role).trim().toLowerCase(), legacyMap) }
+      : person));
   const sampleNameFor = (role) => {
     const found = people.find((person) => String(person?.role || '').trim().toLowerCase() === role)?.name;
     if (found) return found;
-    if (role === 'bride') return sample.brideName || '';
-    if (role === 'groom') return sample.groomName || '';
+    if (role === 'person1') return sample.person1Name || '';
+    if (role === 'person2') return sample.person2Name || '';
     return '';
   };
   // A sample name inside other sample text ("Priya & Arjun's big day") is
@@ -624,18 +632,22 @@ function overlayTrialOnDemoData(demoData, rawPayload) {
     });
 
   // Named people take their role's place; a role the sample never had is added.
+  // The sample's Bride/Groom-style choice is not carried onto a visitor's name —
+  // nobody asked them — so the design shows its neutral wording.
   const present = new Set(people.map((person) => String(person?.role || '').trim().toLowerCase()));
   const nextPeople = people
     .map((person) => {
       const name = nameFor(String(person?.role || '').trim().toLowerCase());
-      return name ? { ...person, name } : person;
+      if (!name) return person;
+      const { role_choice: _sampleChoice, ...rest } = person;
+      return { ...rest, name };
     })
     .concat(named.filter((person) => !present.has(person.role)).map((person) => ({ role: person.role, name: person.name })));
 
   return {
     ...sample,
-    brideName: nameFor('bride') || sample.brideName,
-    groomName: nameFor('groom') || sample.groomName,
+    person1Name: nameFor('person1') || sample.person1Name,
+    person2Name: nameFor('person2') || sample.person2Name,
     weddingDate: eventDate,
     venueName: venue,
     venueAddress: city,
@@ -700,7 +712,8 @@ async function applyTrialPrefill(eventId, trialDemoId, now = new Date()) {
         && event._count.people === 0 && event._count.functions === 0 && event._count.venues === 0;
       if (!empty || event.templateId !== trial.templateId) return false;
 
-      const payload = normalizeTrialPayload(trial.payload);
+      const template = await tx.template.findUnique({ where: { id: trial.templateId }, select: { fieldSchema: true } });
+      const payload = normalizeTrialPayload(trial.payload, legacySlotMapFor(template?.fieldSchema));
       const named = payload.people
         .map((person) => ({ role: person.role, name: inertText(person.name) }))
         .filter((person) => person.name && person.name.length <= MAX_NAME);

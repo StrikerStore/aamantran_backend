@@ -15,6 +15,7 @@ const siteUrls     = require('../config/siteUrls');
 const storage      = require('../config/storage');
 const objectStorage = require('../services/objectStorage');
 const { normalizeDemoCustomFieldRows } = require('../utils/dateNormalize');
+const { legacySlotMapFor, toPersonKey, normalizeFieldSchema } = require('../utils/personSlots');
 const { normalizeShortDescription, normalizeHighlights } = require('../utils/templateMarketing');
 const { EXCLUDE_TEST_EVENT, EXCLUDE_SANDBOX_TEMPLATE } = require('../utils/testFilters');
 const { purgeTestEvents } = require('../services/testAccount.service');
@@ -166,8 +167,10 @@ async function create(req, res) {
 
   // Build demo data rows if provided
   const parsedDemo = demoData ? JSON.parse(demoData) : null;
+  const createSchema = parsedDemo?.field_schema ? normalizeFieldSchema(parsedDemo.field_schema, null) : null;
+  const createSlots = parsedDemo ? demoSlotFields(parsedDemo, createSchema) : null;
   const demoCustomNormalized = parsedDemo
-    ? normalizeDemoCustomFieldRows(parsedDemo.field_schema || null, parsedDemo.custom_fields || [])
+    ? normalizeDemoCustomFieldRows(createSchema, createSlots.customFields)
     : [];
 
   const template = await prisma.template.create({
@@ -195,19 +198,19 @@ async function create(req, res) {
       shortDescription: normalizeShortDescription(shortDescription),
       highlights:       normalizeHighlights(highlights),
       isActive:      false,
-      fieldSchema:   parsedDemo?.field_schema || null,
+      fieldSchema:   createSchema,
       ...(parsedDemo && {
         demoData: {
           create: {
-            brideName:    parsedDemo.bride_name    || '',
-            groomName:    parsedDemo.groom_name    || '',
+            person1Name:  createSlots.person1Name,
+            person2Name:  createSlots.person2Name,
             weddingDate:  parsedDemo.wedding_date  || '',
             venueName:    parsedDemo.venue_name    || '',
             venueAddress: parsedDemo.venue_address || null,
             photoUrls:    parsedDemo.photo_urls || [],
             musicUrl:     parsedDemo.music_url  || null,
             language:     parsedDemo.language   || 'en',
-            people:       parsedDemo.people     || [],
+            people:       createSlots.people,
             customFields: demoCustomNormalized,
             mediaSlotDemoUrls: parsedDemo.media_slot_demo_urls || null,
             instagramUrl:      parsedDemo.instagram_url      || null,
@@ -346,6 +349,28 @@ async function updateFiles(req, res) {
   res.json({ ok: true, message: 'Template files updated', thumbnailUrl, desktopThumbnailUrl, mobileThumbnailUrl });
 }
 
+/**
+ * A demo payload on person1/person2: names, people roles and custom keys. An
+ * admin tab opened before the rename may still send bride_name / groom_name and
+ * groom/bride roles; the template's slot map translates them.
+ */
+function demoSlotFields(demo, fieldSchema) {
+  const map = legacySlotMapFor(fieldSchema);
+  const legacyName = { groom: demo.groom_name, bride: demo.bride_name };
+  const rename = (rows, keys) => (Array.isArray(rows) ? rows : []).map((r) => {
+    if (!r || typeof r !== 'object') return r;
+    const out = { ...r };
+    for (const k of keys) if (typeof out[k] === 'string') out[k] = toPersonKey(out[k], map);
+    return out;
+  });
+  return {
+    person1Name: demo.person1_name || legacyName[map.person1] || '',
+    person2Name: demo.person2_name || legacyName[map.person2] || '',
+    people: rename(demo.people, ['role']),
+    customFields: rename(demo.custom_fields, ['key', 'fieldKey']),
+  };
+}
+
 // PUT /api/v1/templates/:id/demo-data
 async function updateDemoData(req, res) {
   const demo = req.body; // expects demo data + field_schema
@@ -360,29 +385,32 @@ async function updateDemoData(req, res) {
     await prisma.templateDemoData.delete({ where: { templateId: template.id } });
   }
 
-  // Save fieldSchema on the template if provided
-  if (demo.field_schema) {
+  // Save fieldSchema on the template if provided — keeping its slot map (the
+  // admin form doesn't send it) and person1/person2 keys.
+  const nextSchema = demo.field_schema ? normalizeFieldSchema(demo.field_schema, template.fieldSchema) : null;
+  if (nextSchema) {
     await prisma.template.update({
       where: { id: template.id },
-      data:  { fieldSchema: demo.field_schema },
+      data:  { fieldSchema: nextSchema },
     });
   }
 
-  const schemaForDemo = demo.field_schema ?? template.fieldSchema;
-  const demoCustomNormalized = normalizeDemoCustomFieldRows(schemaForDemo, demo.custom_fields || []);
+  const schemaForDemo = nextSchema ?? template.fieldSchema;
+  const slots = demoSlotFields(demo, schemaForDemo);
+  const demoCustomNormalized = normalizeDemoCustomFieldRows(schemaForDemo, slots.customFields);
 
   const updated = await prisma.templateDemoData.create({
     data: {
       templateId:   template.id,
-      brideName:    demo.bride_name    || '',
-      groomName:    demo.groom_name    || '',
+      person1Name:  slots.person1Name,
+      person2Name:  slots.person2Name,
       weddingDate:  demo.wedding_date  || '',
       venueName:    demo.venue_name    || '',
       venueAddress: demo.venue_address || null,
       photoUrls:    demo.photo_urls    || [],
       musicUrl:     demo.music_url     || null,
       language:     demo.language      || 'en',
-      people:           demo.people             || [],
+      people:           slots.people,
       customFields:     demoCustomNormalized,
       mediaSlotDemoUrls: demo.media_slot_demo_urls || null,
       instagramUrl:      demo.instagram_url      || null,
@@ -700,7 +728,7 @@ async function uploadDemoMedia(req, res) {
       await prisma.templateDemoData.create({
         data: {
           templateId: template.id,
-          brideName: '', groomName: '', weddingDate: '', venueName: '',
+          weddingDate: '', venueName: '',
           mediaSlotDemoUrls: jsonSafe,
         },
       });

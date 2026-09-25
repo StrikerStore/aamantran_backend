@@ -18,7 +18,7 @@ async function list(req, res) {
       orderBy: { updatedAt: 'desc' },
       include: {
         user:  { select: { id: true, username: true, email: true } },
-        event: { select: { id: true, slug: true, brideName: true, groomName: true } },
+        event: { select: { id: true, slug: true, person1Name: true, person2Name: true } },
         _count: { select: { messages: true } },
       },
     }),
@@ -34,7 +34,7 @@ async function get(req, res) {
     where: { id: req.params.id },
     include: {
       user:     { select: { id: true, username: true, email: true, phone: true, phoneCountryCode: true } },
-      event:    { select: { id: true, slug: true, brideName: true, groomName: true } },
+      event:    { select: { id: true, slug: true, person1Name: true, person2Name: true } },
       messages: { orderBy: { createdAt: 'asc' } },
     },
   });
