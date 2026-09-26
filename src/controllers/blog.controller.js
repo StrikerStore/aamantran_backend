@@ -4,13 +4,21 @@ const storage = require('../config/storage');
 const objectStorage = require('../services/objectStorage');
 const path = require('path');
 const fs = require('fs');
+const { revalidateBlog } = require('../utils/websiteRevalidate');
 
 // ── helpers ──────────────────────────────────────────────────────────
 
-/** Upload cover image to R2 (or local uploads/) and return the public URL. */
+/**
+ * Upload cover image to R2 (or local uploads/) and return the public URL.
+ *
+ * Each upload gets its own key. With one fixed `cover.ext` per post, replacing
+ * a cover deleted and rewrote the same URL, so the CDN, the website's image
+ * optimiser and browsers — all keyed on the URL — kept showing the old image
+ * (or briefly none) until their caches ran out.
+ */
 async function uploadCoverImage(file, slug) {
   const ext = path.extname(file.originalname || '.jpg').toLowerCase();
-  const key = `blog/${slug}/cover${ext}`;
+  const key = `blog/${slug}/cover-${Date.now().toString(36)}${ext}`;
 
   if (storage.useObjectStorage()) {
     const buf = fs.readFileSync(file.path);
@@ -156,6 +164,8 @@ async function update(req, res) {
     },
   });
 
+  // A published post's edit (text, cover or slug) is live straight away.
+  if (updated.status === 'published') await revalidateBlog();
   res.json(updated);
 }
 
@@ -172,6 +182,7 @@ async function publish(req, res) {
     },
   });
 
+  await revalidateBlog();
   res.json(updated);
 }
 
@@ -185,6 +196,7 @@ async function unpublish(req, res) {
     data: { status: 'draft' },
   });
 
+  if (post.status === 'published') await revalidateBlog();
   res.json(updated);
 }
 
@@ -202,6 +214,7 @@ async function remove(req, res) {
   }
 
   await prisma.blogPost.delete({ where: { id: post.id } });
+  if (post.status === 'published') await revalidateBlog();
   res.json({ ok: true });
 }
 

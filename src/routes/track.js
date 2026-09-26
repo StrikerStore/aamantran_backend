@@ -91,32 +91,32 @@ router.post('/', trackLimiter, async (req, res) => {
   };
 
   try {
-    try {
-      await prisma.websiteSession.upsert({
-        where: { id: sessionId },
-        create: {
-          id: sessionId,
-          referrer: normalizeReferrer(payload.referrer),
-          utmSource: cleanStr(utm.source, 128),
-          utmMedium: cleanStr(utm.medium, 128),
-          utmCampaign: cleanStr(utm.campaign, 128),
-          deviceType,
-          browser,
-          os,
-          country,
-          region,
-          city,
-          storefront,
-          pageViews: isPageview ? 1 : 0,
-        },
-        update: sessionUpdate,
-      });
-    } catch (err) {
-      // Two beacons from a visitor's first page (a pageview and another event)
-      // can arrive together. Prisma's upsert is a read then a write, so both
-      // see no session and both insert; the second loses on the primary key.
-      // The session exists by now, so this beacon only has to update it.
-      if (err?.code !== 'P2002') throw err;
+    // Insert-or-skip, then update when it was skipped. Not `upsert`: two beacons
+    // from a visitor's first page (a pageview and another event) arrive
+    // together, Prisma's upsert reads then writes, so both saw no session and
+    // both inserted, and the second failed on the primary key. Catching that
+    // still left a "prisma:error … Unique constraint failed" line in the logs
+    // (the client logs every error), so this path never raises it at all:
+    // `skipDuplicates` is INSERT IGNORE, and a skipped insert reports count 0.
+    const { count } = await prisma.websiteSession.createMany({
+      data: [{
+        id: sessionId,
+        referrer: normalizeReferrer(payload.referrer),
+        utmSource: cleanStr(utm.source, 128),
+        utmMedium: cleanStr(utm.medium, 128),
+        utmCampaign: cleanStr(utm.campaign, 128),
+        deviceType,
+        browser,
+        os,
+        country,
+        region,
+        city,
+        storefront,
+        pageViews: isPageview ? 1 : 0,
+      }],
+      skipDuplicates: true,
+    });
+    if (count === 0) {
       await prisma.websiteSession.update({ where: { id: sessionId }, data: sessionUpdate });
     }
     await prisma.websiteEvent.create({
