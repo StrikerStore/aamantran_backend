@@ -84,30 +84,41 @@ router.post('/', trackLimiter, async (req, res) => {
   // sitting -- an Indian visitor browsing the global site is global traffic.
   const storefront = normalizeStorefront(payload.storefront);
 
+  // First-touch attribution: referrer/utm/device/geo are never overwritten.
+  const sessionUpdate = {
+    lastSeenAt: new Date(),
+    ...(isPageview ? { pageViews: { increment: 1 } } : {}),
+  };
+
   try {
-    await prisma.websiteSession.upsert({
-      where: { id: sessionId },
-      create: {
-        id: sessionId,
-        referrer: normalizeReferrer(payload.referrer),
-        utmSource: cleanStr(utm.source, 128),
-        utmMedium: cleanStr(utm.medium, 128),
-        utmCampaign: cleanStr(utm.campaign, 128),
-        deviceType,
-        browser,
-        os,
-        country,
-        region,
-        city,
-        storefront,
-        pageViews: isPageview ? 1 : 0,
-      },
-      // First-touch attribution: referrer/utm/device/geo are never overwritten.
-      update: {
-        lastSeenAt: new Date(),
-        ...(isPageview ? { pageViews: { increment: 1 } } : {}),
-      },
-    });
+    try {
+      await prisma.websiteSession.upsert({
+        where: { id: sessionId },
+        create: {
+          id: sessionId,
+          referrer: normalizeReferrer(payload.referrer),
+          utmSource: cleanStr(utm.source, 128),
+          utmMedium: cleanStr(utm.medium, 128),
+          utmCampaign: cleanStr(utm.campaign, 128),
+          deviceType,
+          browser,
+          os,
+          country,
+          region,
+          city,
+          storefront,
+          pageViews: isPageview ? 1 : 0,
+        },
+        update: sessionUpdate,
+      });
+    } catch (err) {
+      // Two beacons from a visitor's first page (a pageview and another event)
+      // can arrive together. Prisma's upsert is a read then a write, so both
+      // see no session and both insert; the second loses on the primary key.
+      // The session exists by now, so this beacon only has to update it.
+      if (err?.code !== 'P2002') throw err;
+      await prisma.websiteSession.update({ where: { id: sessionId }, data: sessionUpdate });
+    }
     await prisma.websiteEvent.create({
       data: { sessionId, type, path, metadata },
     });
