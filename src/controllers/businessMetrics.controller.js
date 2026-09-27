@@ -18,13 +18,17 @@
 const prisma = require('../utils/prisma');
 const { EXCLUDE_TEST_OWNER, EXCLUDE_SANDBOX_TEMPLATE } = require('../utils/testFilters');
 const { parseRange, parseStorefront, sessionStorefrontWhere } = require('./websiteAnalytics.controller');
+const { IST_OFFSET_MS } = require('../utils/istDate');
 
 const TOP_TEMPLATES = 8;
 /** A pending order older than this is stuck, not in progress. */
 const STUCK_PENDING_MS = 60 * 60 * 1000;
 
+/** A payment timestamp → the IST calendar day it happened on, 'YYYY-MM-DD'. */
 function toDateKey(value) {
-  return value instanceof Date ? value.toISOString().slice(0, 10) : String(value);
+  return value instanceof Date
+    ? new Date(value.getTime() + IST_OFFSET_MS).toISOString().slice(0, 10)
+    : String(value);
 }
 
 /** Revenue and order counts for one set of payments, per currency. */

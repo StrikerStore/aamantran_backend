@@ -22,7 +22,8 @@
 const { Prisma } = require('@prisma/client');
 const prisma = require('../utils/prisma');
 const { EXCLUDE_TEST_OWNER, EXCLUDE_SANDBOX_TEMPLATE } = require('../utils/testFilters');
-const { parseRange, parseStorefront, sessionStorefrontWhere } = require('./websiteAnalytics.controller');
+const { parseRange, parseStorefront, sessionStorefrontWhere, istToday } = require('./websiteAnalytics.controller');
+const { istDayStartUtc } = require('../utils/istDate');
 const { LINK_MINUTES, DATA_HOURS, DAILY_CAP } = require('../services/trialDemo.service');
 
 /** India Standard Time, for the "when do people shop" heatmap. */
@@ -596,8 +597,8 @@ async function getTrialDemos(req, res) {
   const storefront = parseStorefront(req.query);
   const now = new Date();
   const dayAgo = new Date(now.getTime() - DAY_MS);
-  const startOfToday = new Date(now);
-  startOfToday.setHours(0, 0, 0, 0);
+  // Midnight IST, not the server's own midnight (the host runs on UTC).
+  const startOfToday = istDayStartUtc(istToday(now));
 
   const TRY_TYPES = ['try_demo_started', 'try_demo_created', 'try_demo_opened', 'try_demo_to_checkout'];
 
@@ -638,7 +639,7 @@ async function getTrialDemos(req, res) {
     eventSessionCounts(from, to, storefront, TRY_TYPES),
     eventSessionsBySlug(from, to, storefront, ['view_template', ...TRY_TYPES]),
     prisma.$queryRaw`
-      SELECT DATE(e.createdAt) AS d, e.type, COUNT(DISTINCT e.sessionId) AS c
+      SELECT DATE(DATE_ADD(e.createdAt, INTERVAL ${IST_OFFSET_MIN} MINUTE)) AS d, e.type, COUNT(DISTINCT e.sessionId) AS c
       FROM WebsiteEvent e
       JOIN WebsiteSession s ON s.id = e.sessionId
       WHERE e.createdAt >= ${from} AND e.createdAt <= ${to}

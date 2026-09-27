@@ -2,18 +2,34 @@ const { Prisma } = require('@prisma/client');
 const prisma = require('../utils/prisma');
 const { EXCLUDE_TEST_OWNER } = require('../utils/testFilters');
 
+const { istDayStartUtc, IST_OFFSET_MS } = require('../utils/istDate');
+
 const MAX_RANGE_DAYS = 92;
 const LIVE_WINDOW_MS = 5 * 60 * 1000;
+const DAY_MS = 24 * 60 * 60 * 1000;
+/** For SQL: shift a stored UTC timestamp to IST before taking its DATE(). */
+const IST_OFFSET_MIN = 330;
 const { FUNNEL_STAGES } = require('../lib/analyticsEvents');
 
-/** Parse ?from&to (YYYY-MM-DD) into a UTC day-aligned range, default last 30 days. */
+/** Today's date in IST, 'YYYY-MM-DD'. */
+function istToday(now = new Date()) {
+  return new Date(now.getTime() + IST_OFFSET_MS).toISOString().slice(0, 10);
+}
+
+/**
+ * Parse ?from&to (YYYY-MM-DD, read as IST calendar days) into a UTC instant
+ * range, default the last 30 IST days. The admin works in India, so "today"
+ * starts at 00:00 IST, not at 05:30 IST when the UTC date turns over.
+ */
 function parseRange(query) {
   const now = new Date();
-  const to = query.to ? new Date(`${query.to}T23:59:59.999Z`) : now;
+  const toStart = query.to ? istDayStartUtc(query.to) : null;
+  if (query.to && !toStart) return null;
+  const to = toStart ? new Date(toStart.getTime() + DAY_MS - 1) : now;
   const from = query.from
-    ? new Date(`${query.from}T00:00:00.000Z`)
-    : new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate() - 29));
-  if (Number.isNaN(from.getTime()) || Number.isNaN(to.getTime()) || from > to) return null;
+    ? istDayStartUtc(query.from)
+    : new Date(istDayStartUtc(istToday(now)).getTime() - 29 * DAY_MS);
+  if (!from || from > to) return null;
   const maxFrom = new Date(to.getTime() - MAX_RANGE_DAYS * 24 * 60 * 60 * 1000);
   return { from: from < maxFrom ? maxFrom : from, to };
 }
@@ -105,11 +121,12 @@ async function getSummary(req, res) {
       where: { lastSeenAt: { gte: new Date(Date.now() - LIVE_WINDOW_MS) }, ...sfSession },
     }),
     prisma.$queryRaw`
-      SELECT DATE(e.createdAt) AS d, COUNT(*) AS pv, COUNT(DISTINCT e.sessionId) AS v
+      SELECT DATE(DATE_ADD(e.createdAt, INTERVAL ${IST_OFFSET_MIN} MINUTE)) AS d,
+             COUNT(*) AS pv, COUNT(DISTINCT e.sessionId) AS v
       FROM WebsiteEvent e
       JOIN WebsiteSession s ON s.id = e.sessionId
       WHERE e.type = 'pageview' AND e.createdAt >= ${from} AND e.createdAt <= ${to} ${sfSql}
-      GROUP BY DATE(e.createdAt) ORDER BY d ASC`,
+      GROUP BY d ORDER BY d ASC`,
     prisma.websiteSession.groupBy({ by: ['utmSource', 'referrer'], where: sessionWhere, _count: { _all: true } }),
     prisma.websiteSession.groupBy({ by: ['country'], where: sessionWhere, _count: { _all: true } }),
     prisma.websiteSession.groupBy({ by: ['country', 'region', 'city'], where: { ...sessionWhere, city: { not: null } }, _count: { _all: true } }),
@@ -200,4 +217,4 @@ async function getLive(req, res) {
 // parseRange/parseStorefront/sessionStorefrontWhere are exported so the business
 // dashboard applies exactly the same range cap and storefront rule — including
 // counting NULL-storefront sessions as India — rather than a second copy of it.
-module.exports = { getSummary, getLive, parseRange, parseStorefront, sessionStorefrontWhere };
+module.exports = { getSummary, getLive, parseRange, parseStorefront, sessionStorefrontWhere, istToday };
