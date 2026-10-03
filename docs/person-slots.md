@@ -170,6 +170,30 @@ block means the couple app shows every guest option and media. This API
 stores the block on the template and returns `fieldSchema` with the
 event; it does not itself hide those features.
 
+## Live invite link preview
+
+`GET /i/:slug` and `GET /i/:slug/preview` attach an Open Graph card
+(`src/routes/render.js`).
+
+The title is `person1_name` and `person2_name` from the rendered data,
+joined with `&`. If both are empty, it uses the first two people on the
+event. With names, the title ends in "Wedding Invitation". With none, it
+is "You are invited!".
+
+The description is the first function's date, formatted for `en-IN` in
+`Asia/Kolkata`. The card does not include a venue. The image is
+`pickShareImage` in `templateRenderer.js`: a media row with slot
+`wa_share_image`, else the first photo in `invite_hero`,
+`couple_images`, `gallery`, `photos`, or `grand_entry`, else any photo.
+
+A partial invite (`inviteScope: subset`) is rendered with the main
+invite's people and media (`withPairPhotos`). Its functions stay its
+own, so the card date is the partial's first function. `person1Name` and
+`person2Name` are not in `PAIR_SHARED_FIELDS` (that list is language and
+the Links & Guests settings). The title therefore uses the partial row's
+own name columns, and the main invite's people only when those columns
+are empty.
+
 ## Backfill
 
 ```
