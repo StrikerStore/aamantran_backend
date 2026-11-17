@@ -14,7 +14,7 @@
  * the opposite of the intent.
  */
 const prisma = require('../utils/prisma');
-const { INTL, currencyFor } = require('../utils/storefront');
+const { IN, INTL, currencyFor } = require('../utils/storefront');
 
 const KEY_USD_INR_RATE   = 'usdInrRate';
 const KEY_DEFAULT_MARKUP = 'defaultMarkupMultiplier';
@@ -160,23 +160,35 @@ function withUsdPrices(template, settings) {
 /**
  * The order total, itemised, for one storefront.
  *
- * Reproduces the India math exactly as it has always run -- base, minus coupon,
- * floored at 100 minor units, plus GST -- and changes only two things for the
- * international storefront: the base is the derived USD price, and GST is zero
- * because export of services is zero-rated.
+ * India: the listed price, minus the coupon, floored at 100 minor units. What
+ * happens to GST then depends on the template's `gstInclusive`:
+ *   - inclusive: that figure IS the total. The GST inside it is backed out --
+ *       taxable = round(total * 100 / (100 + rate)), GST = total - taxable --
+ *       so taxable + GST always equals the amount charged, to the paisa.
+ *   - exclusive: that figure is the taxable value and GST is added on top.
+ *       This is the math every template used before 2026-11-17.
+ * International: the base is the derived USD price and GST is zero, because
+ * export of services is zero-rated, so `gstInclusive` changes nothing there.
  *
  * Every figure is in the minor units of `currency`: paise for INR, cents for
  * USD. coupon.discountAmount must therefore have been computed against the same
  * base this call uses -- a coupon minOrderAmount is in the minor units of its
  * own storefront currency, which is why coupons are storefront-scoped rather
- * than shared.
+ * than shared. On an inclusive template the coupon comes off the GST-inclusive
+ * price, which is the price the buyer saw.
  *
  * Throws rather than falling back if an international price cannot be derived:
  * silently billing the INR figure in dollars would charge a customer roughly
- * fifty times the intended price.
+ * fifty times the intended price. Throws, too, when the caller did not select
+ * `gstInclusive`: guessing would either overcharge the buyer by the whole GST
+ * or under-collect it.
  */
 function computeBreakup({ template, storefront, coupon, settings }) {
   const intl = storefront === INTL;
+
+  if (typeof template.gstInclusive !== 'boolean') {
+    throw new Error('computeBreakup needs template.gstInclusive (template ' + (template.slug || template.id) + ')');
+  }
 
   let baseAmount = template.price;
   let fxRate = null;
@@ -196,22 +208,50 @@ function computeBreakup({ template, storefront, coupon, settings }) {
 
   // The 100-minor-unit floor is the pre-existing India rule (never bill under
   // INR 1); in dollars it reads as never billing under $1.
-  const taxableAmount = Math.max(100, baseAmount - discountAmount);
+  const afterDiscount = Math.max(100, baseAmount - discountAmount);
   const gstPercent    = intl ? 0 : Number(template.gstPercent || 0);
-  const gstAmount     = Math.round((taxableAmount * gstPercent) / 100);
-  const finalAmount   = taxableAmount + gstAmount;
+  // Reported only where GST applies, so the international breakup never claims
+  // to contain a tax it does not charge.
+  const gstInclusive  = !intl && template.gstInclusive;
+
+  let taxableAmount;
+  let gstAmount;
+  let finalAmount;
+  if (gstInclusive) {
+    finalAmount   = afterDiscount;
+    taxableAmount = Math.round((finalAmount * 100) / (100 + gstPercent));
+    gstAmount     = finalAmount - taxableAmount;
+  } else {
+    taxableAmount = afterDiscount;
+    gstAmount     = Math.round((taxableAmount * gstPercent) / 100);
+    finalAmount   = taxableAmount + gstAmount;
+  }
 
   return {
     baseAmount,
     discountAmount,
     discountPct,
     gstPercent,
+    gstInclusive,
+    taxableAmount,
     gstAmount,
     finalAmount,
     currency: currencyFor(storefront),
     fxRate,
     markupMultiplier,
   };
+}
+
+/**
+ * What an India buyer pays for this template with no coupon: the listed price
+ * when it includes GST, the price plus GST when it does not.
+ *
+ * The one figure to compare two templates by. Their listed prices alone are not
+ * comparable once some include GST and some do not -- ₹2,999 inclusive is
+ * cheaper than ₹2,999 exclusive. Needs price, gstPercent and gstInclusive.
+ */
+function inrListedTotal(template) {
+  return computeBreakup({ template, storefront: IN, coupon: null, settings: null }).finalAmount;
 }
 
 module.exports = {
@@ -223,4 +263,5 @@ module.exports = {
   usdPricesFor,
   withUsdPrices,
   computeBreakup,
+  inrListedTotal,
 };

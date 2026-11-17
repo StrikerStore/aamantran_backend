@@ -3,7 +3,7 @@ const express = require('express');
 const prisma  = require('../utils/prisma');
 const { publicInviteLimiter } = require('../middleware/rateLimits');
 const { EXCLUDE_SANDBOX_TEMPLATE } = require('../utils/testFilters');
-const { getPricingSettings, withUsdPrices } = require('../services/pricing.service');
+const { getPricingSettings, withUsdPrices, inrListedTotal } = require('../services/pricing.service');
 const {
   VISIBLE_REVIEW_WHERE, withSource, genuineAggregate, countCurated,
 } = require('../utils/reviewAggregates');
@@ -66,21 +66,11 @@ function priceParam(value) {
   return Number.isFinite(n) && n >= 0 ? n : undefined;
 }
 
-/**
- * Checkout's price for an order with no coupon — same arithmetic as
- * routes/publicCheckout.js, including its 100-paise taxable floor — so a
- * "From ₹X incl. GST" figure can never disagree with the amount charged.
- */
-function totalWithGst(price, gstPercent) {
-  const taxable = Math.max(100, Number(price) || 0);
-  return taxable + Math.round((taxable * Number(gstPercent || 0)) / 100);
-}
-
 // GET /api/templates — template listing for the gallery page
 // Query params:
 //   community, eventType, exclude           exact / bestFor-contains / slug-not filters
 //   q                                       name contains (case-insensitive under the MySQL collation)
-//   minPrice, maxPrice                      bounds on the base price in paise, before GST
+//   minPrice, maxPrice                      bounds on the listed INR price in paise (GST-inclusive or not, per template)
 //   sort                                    popular | new | price-asc | price-desc
 //   limit (1–100, default 20), page (≥ 1)
 router.get('/', async (req, res) => {
@@ -137,7 +127,7 @@ router.get('/', async (req, res) => {
         desktopEntryFile: true, mobileEntryFile: true,
         bestFor: true, languages: true, badge: true,
         shortDescription: true, highlights: true, aboutText: true,
-        price: true, originalPrice: true, gstPercent: true, markupMultiplier: true,
+        price: true, originalPrice: true, gstPercent: true, gstInclusive: true, markupMultiplier: true,
         buyerCount: true, avgRating: true, releasedAt: true,
       },
     }),
@@ -185,7 +175,8 @@ router.get('/', async (req, res) => {
 // Returns:
 //   total      active catalogue templates
 //   lowest     { price, gstPercent, total } of the template with the lowest
-//              payable total (GST included, checkout arithmetic), or null
+//              payable total (GST included, checkout's own arithmetic via
+//              inrListedTotal), or null
 //   occasions  { "Wedding": 12, "Birthday": 3, ... } counted per exact bestFor
 //              term. Note the list filter's eventType is a *contains* match, so
 //              eventType=Birthday also returns "First Birthday" templates that
@@ -193,15 +184,15 @@ router.get('/', async (req, res) => {
 router.get('/stats', async (_req, res) => {
   const rows = await prisma.template.findMany({
     where:  { isActive: true, ...EXCLUDE_SANDBOX_TEMPLATE },
-    select: { price: true, gstPercent: true, bestFor: true },
+    select: { price: true, gstPercent: true, gstInclusive: true, bestFor: true },
   });
 
   let lowest = null;
   const occasions = {};
   for (const row of rows) {
-    const total = totalWithGst(row.price, row.gstPercent);
-    // Compared on the payable total, not the base price: a cheaper base with a
-    // higher GST rate can cost the buyer more.
+    const total = inrListedTotal(row);
+    // Compared on the payable total, not the listed price: a lower price that
+    // excludes GST can cost the buyer more than a higher one that includes it.
     if (!lowest || total < lowest.total) {
       lowest = { price: row.price, gstPercent: Number(row.gstPercent || 0), total };
     }
@@ -275,7 +266,7 @@ router.get('/:slug', async (req, res) => {
       desktopEntryFile: true, mobileEntryFile: true,
       bestFor: true, languages: true, badge: true, style: true, colourPalette: true, animations: true,
       shortDescription: true, highlights: true,
-      price: true, originalPrice: true, gstPercent: true, markupMultiplier: true, aboutText: true,
+      price: true, originalPrice: true, gstPercent: true, gstInclusive: true, markupMultiplier: true, aboutText: true,
       buyerCount: true, avgRating: true, releasedAt: true,
     },
   });

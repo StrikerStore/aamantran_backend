@@ -7,6 +7,7 @@ const { sendBalancePaymentEmail, sendInvitationPublishedEmail, sendTemplateChang
 const { addEventMedia, removeEventMedia } = require('../services/eventMedia.service');
 const { normalizeOptionalHttpUrl, normalizeOptionalHashtag } = require('../utils/urlNormalize');
 const { normalizePhone, normalizePhoneForGateway } = require('../utils/phone');
+const { inrListedTotal } = require('../services/pricing.service');
 const siteUrls = require('../config/siteUrls');
 const { mintInvitePreviewToken } = require('../services/previewToken');
 
@@ -698,7 +699,7 @@ async function updateEventData(req, res) {
 /**
  * Refuse a PAID upgrade for a customer who bought on the international storefront.
  *
- * `balance` is the difference between two INR template prices, but an
+ * `balance` is the difference between two INR template totals, but an
  * international customer paid a DERIVED dollar price carrying the markup
  * multiplier — so the rupee difference is not what they owe, and the payment
  * link would bill them in a currency they never transacted in. The swap flow is
@@ -745,9 +746,10 @@ async function swapTemplate(req, res) {
 
   if (!event) return res.status(404).json({ ok: false, message: 'Event not found for this user' });
 
-  const oldPrice = event.template.price;
-  const newPrice = newTemplate.price;
-  const balance  = newPrice - oldPrice;
+  // Compared on what an India buyer pays for each, GST included, so a swap
+  // between an inclusive and an exclusive template is still charged the real
+  // difference. When both include GST this is exactly newPrice - oldPrice.
+  const balance = inrListedTotal(newTemplate) - inrListedTotal(event.template);
 
   const intlBlock = await blockPaidUpgradeForIntlBuyer(req.params.id, balance);
   if (intlBlock) return res.status(409).json(intlBlock);
@@ -857,9 +859,8 @@ async function swapPairedTemplate(req, res) {
   }
 
   const newTemplate = await prisma.template.findUniqueOrThrow({ where: { id: newTemplateId } });
-  const oldPrice = full.template.price;
-  const newPrice = newTemplate.price;
-  const balance  = newPrice - oldPrice;
+  // GST-inclusive totals, as in swapTemplate above.
+  const balance = inrListedTotal(newTemplate) - inrListedTotal(full.template);
 
   const intlBlockPaired = await blockPaidUpgradeForIntlBuyer(req.params.id, balance);
   if (intlBlockPaired) return res.status(409).json(intlBlockPaired);

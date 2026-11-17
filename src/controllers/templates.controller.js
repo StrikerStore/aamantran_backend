@@ -48,7 +48,7 @@ async function list(req, res) {
         shortDescription: true, highlights: true,
         price: true, originalPrice: true,
         isActive: true, buyerCount: true, avgRating: true,
-        gstPercent: true, fieldSchema: true, releasedAt: true, createdAt: true,
+        gstPercent: true, gstInclusive: true, fieldSchema: true, releasedAt: true, createdAt: true,
       },
     }),
     prisma.template.count({ where }),
@@ -125,10 +125,28 @@ function parseMarkupMultiplier(raw) {
   return { value: n };
 }
 
+/**
+ * Whether the price includes GST. Arrives as a multipart string, so 'true' and
+ * 'false' are the only accepted values: a typo must not silently flip whether
+ * GST is added on top, which moves the amount charged by the whole tax.
+ *
+ * Absent means "not sent" (undefined), so an update from an older admin build
+ * leaves the stored value alone; create then uses the column default, inclusive.
+ *
+ * @returns {{value: boolean|undefined}|{error: string}}
+ */
+function parseGstInclusive(raw) {
+  if (raw === undefined || raw === null || raw === '') return { value: undefined };
+  const v = String(raw).trim().toLowerCase();
+  if (v === 'true')  return { value: true };
+  if (v === 'false') return { value: false };
+  return { error: 'gstInclusive must be true or false' };
+}
+
 // POST /api/v1/templates   (multipart: templateZip + desktop/mobile thumbnail files + JSON body fields)
 async function create(req, res) {
   const { name, community, bestFor, languages, style, colourPalette, animations,
-          price, originalPrice, gstPercent, markupMultiplier, badge, aboutText,
+          price, originalPrice, gstPercent, gstInclusive, markupMultiplier, badge, aboutText,
           shortDescription, highlights, demoData } = req.body;
 
   if (!name || !community || !price || !aboutText) {
@@ -136,6 +154,8 @@ async function create(req, res) {
   }
   const markup = parseMarkupMultiplier(markupMultiplier);
   if (markup.error) return res.status(400).json({ ok: false, message: markup.error });
+  const inclusive = parseGstInclusive(gstInclusive);
+  if (inclusive.error) return res.status(400).json({ ok: false, message: inclusive.error });
   const tag = parseBadge(badge);
   if (tag.error) return res.status(400).json({ ok: false, message: tag.error });
   const zipFile = req.files?.templateZip?.[0];
@@ -192,6 +212,7 @@ async function create(req, res) {
       price:         Number(price),
       originalPrice: originalPrice ? Number(originalPrice) : null,
       gstPercent:    Number(gstPercent || 0),
+      ...(inclusive.value !== undefined && { gstInclusive: inclusive.value }),
       markupMultiplier: markup.value,
       badge:         tag.value,
       aboutText,
@@ -248,11 +269,13 @@ async function create(req, res) {
 // PUT /api/v1/templates/:id  (optional desktop/mobile thumbnail files upload)
 async function update(req, res) {
   const { name, community, bestFor, languages, style, colourPalette, animations,
-          price, originalPrice, gstPercent, markupMultiplier, badge, aboutText,
+          price, originalPrice, gstPercent, gstInclusive, markupMultiplier, badge, aboutText,
           shortDescription, highlights } = req.body;
 
   const markup = parseMarkupMultiplier(markupMultiplier);
   if (markup.error) return res.status(400).json({ ok: false, message: markup.error });
+  const inclusive = parseGstInclusive(gstInclusive);
+  if (inclusive.error) return res.status(400).json({ ok: false, message: inclusive.error });
   const tag = parseBadge(badge);
   if (tag.error) return res.status(400).json({ ok: false, message: tag.error });
 
@@ -286,6 +309,7 @@ async function update(req, res) {
       ...(price         && { price: Number(price) }),
       ...(originalPrice !== undefined && { originalPrice: originalPrice ? Number(originalPrice) : null }),
       ...(gstPercent    !== undefined && { gstPercent: Number(gstPercent || 0) }),
+      ...(inclusive.value !== undefined && { gstInclusive: inclusive.value }),
       // Sent as '' to clear it back to the global default, so `!== undefined`
       // rather than a truthiness check -- otherwise it could never be unset.
       ...(markupMultiplier !== undefined && { markupMultiplier: markup.value }),

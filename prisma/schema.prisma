@@ -28,6 +28,12 @@ model Template {
   price         Int               // paise — ₹1,999 = 199900
   originalPrice Int?
   gstPercent    Int      @default(0)
+  /// Whether `price` already includes GST. True: `price` is the total an India
+  /// buyer pays, and the GST inside it is backed out for the record. False: GST
+  /// is added on top of `price` at checkout. Chosen per template in the admin.
+  /// Has no effect on the international storefront, which charges no GST, or on
+  /// the USD price, which is always derived from `price` as entered.
+  gstInclusive  Boolean  @default(true)
   /// Lifts the international price above a straight FX conversion. The USD price
   /// is always derived — price / usdInrRate * markupMultiplier, rounded up to the
   /// next multiple of 10 minus a cent — never stored, so changing the global rate

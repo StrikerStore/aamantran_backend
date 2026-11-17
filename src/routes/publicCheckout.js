@@ -93,7 +93,7 @@ router.get('/coupons', async (req, res) => {
 
     const template = await prisma.template.findUnique({
       where:  { slug: String(templateSlug), isActive: true, ...EXCLUDE_SANDBOX_TEMPLATE },
-      select: { id: true, slug: true, price: true, gstPercent: true, markupMultiplier: true },
+      select: { id: true, slug: true, price: true, gstPercent: true, gstInclusive: true, markupMultiplier: true },
     });
     if (!template) return res.status(404).json({ message: 'Template not found' });
 
@@ -127,7 +127,7 @@ router.post('/coupon-preview', async (req, res) => {
 
     const template = await prisma.template.findUnique({
       where: { slug: templateSlug, isActive: true, ...EXCLUDE_SANDBOX_TEMPLATE },
-      select: { id: true, slug: true, price: true, gstPercent: true, markupMultiplier: true },
+      select: { id: true, slug: true, price: true, gstPercent: true, gstInclusive: true, markupMultiplier: true },
     });
     if (!template) return res.status(404).json({ message: 'Template not found' });
 
@@ -150,6 +150,7 @@ router.post('/coupon-preview', async (req, res) => {
         discountAmount: breakup.discountAmount,
         discountPct:    breakup.discountPct,
         gstPercent:     breakup.gstPercent,
+        gstInclusive:   breakup.gstInclusive,
         gstAmount:      breakup.gstAmount,
         finalAmount:    breakup.finalAmount,
         currency:       breakup.currency,
@@ -172,7 +173,7 @@ router.post('/order', async (req, res) => {
 
     const template = await prisma.template.findUnique({
       where: { slug: templateSlug, isActive: true, ...EXCLUDE_SANDBOX_TEMPLATE },
-      select: { id: true, slug: true, name: true, price: true, gstPercent: true, markupMultiplier: true },
+      select: { id: true, slug: true, name: true, price: true, gstPercent: true, gstInclusive: true, markupMultiplier: true },
     });
     if (!template) return res.status(404).json({ message: 'Template not found' });
 
@@ -280,7 +281,7 @@ router.post('/order', async (req, res) => {
         orderId:   payment.orderId,
         amount:    finalAmount,
         dummy:     true,
-        priceBreakup: { baseAmount: breakup.baseAmount, discountAmount, gstPercent, gstAmount, finalAmount, discountPct, currency: breakup.currency },
+        priceBreakup: { baseAmount: breakup.baseAmount, discountAmount, gstPercent, gstInclusive: breakup.gstInclusive, gstAmount, finalAmount, discountPct, currency: breakup.currency },
       });
     }
 
@@ -309,7 +310,7 @@ router.post('/order', async (req, res) => {
         paymentId:  payment.id,
         orderId:    payment.orderId,
         amount:     finalAmount,
-        priceBreakup: { baseAmount: breakup.baseAmount, discountAmount, gstPercent, gstAmount, finalAmount, discountPct, currency: breakup.currency },
+        priceBreakup: { baseAmount: breakup.baseAmount, discountAmount, gstPercent, gstInclusive: breakup.gstInclusive, gstAmount, finalAmount, discountPct, currency: breakup.currency },
       });
     }
 
@@ -334,7 +335,7 @@ router.post('/order', async (req, res) => {
       paymentId:  payment.id,
       orderId:    payment.orderId,
       amount:     finalAmount,
-      priceBreakup: { baseAmount: breakup.baseAmount, discountAmount, gstPercent, gstAmount, finalAmount, discountPct, currency: breakup.currency },
+      priceBreakup: { baseAmount: breakup.baseAmount, discountAmount, gstPercent, gstInclusive: breakup.gstInclusive, gstAmount, finalAmount, discountPct, currency: breakup.currency },
     });
   } catch {
     return res.status(500).json({ message: 'Failed to create checkout order' });
