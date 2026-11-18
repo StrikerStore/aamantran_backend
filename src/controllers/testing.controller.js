@@ -24,6 +24,7 @@ const {
 const {
   createDeveloper, rotateDeveloperPassword, setDeveloperActive,
 } = require('../services/developerAccount.service');
+const { buildSampleData, parseEventData, applyEventData } = require('../services/testEventData.service');
 
 /** Mirrors the helper in routes/publicCheckout.js — first entry of `bestFor`. */
 function inferEventTypeFromTemplate(template) {
@@ -252,6 +253,68 @@ async function repin(req, res) {
   res.json({ ok: true, event: shapeEvent(event), urls: buildUrls(event) });
 }
 
+/**
+ * The loaded test event with the schema it renders with: the pinned version's
+ * when it is pinned, else the template's own (what the draft folder uses).
+ * @returns {Promise<{ error?: { status: number, message: string }, user?: object, event?: object, fieldSchema?: unknown }>}
+ */
+async function loadedTestEvent() {
+  const user = await findTestUser();
+  if (!user) return { error: { status: 404, message: 'Test account has not been created yet' } };
+  const event = await prisma.event.findFirst({
+    where:   { ownerId: user.id },
+    orderBy: { createdAt: 'desc' },
+    include: {
+      template: {
+        include: { demoData: { include: { functions: { orderBy: { sortOrder: 'asc' } } } } },
+      },
+      templateVersion: { select: { fieldSchema: true } },
+    },
+  });
+  if (!event) return { error: { status: 404, message: 'No template is loaded in the test account' } };
+  const fieldSchema = event.templateVersion?.fieldSchema ?? event.template.fieldSchema;
+  return { user, event, fieldSchema };
+}
+
+// GET /api/v1/testing/event-data/sample
+// The loaded template's demo data as a JSON file (a download) to edit and upload back.
+async function eventDataSample(req, res) {
+  const { error, event, fieldSchema } = await loadedTestEvent();
+  if (error) return res.status(error.status).json({ ok: false, message: error.message });
+  const data = buildSampleData(event.template, fieldSchema);
+  res.setHeader('Content-Type', 'application/json; charset=utf-8');
+  // Slugs are [a-z0-9-], so the name needs no escaping.
+  res.setHeader('Content-Disposition', `attachment; filename="${event.template.slug}-test-data.json"`);
+  res.send(`${JSON.stringify(data, null, 2)}\n`);
+}
+
+// POST /api/v1/testing/event-data   Body: { data: <the JSON file> }
+// Fill the test invitation from a file. Every section in it replaces that part
+// of the invitation; a problem anywhere means nothing is written.
+async function uploadEventData(req, res) {
+  const { error, user, event, fieldSchema } = await loadedTestEvent();
+  if (error) return res.status(error.status).json({ ok: false, message: error.message });
+
+  const { errors, warnings, plan } = parseEventData(req.body?.data, {
+    fieldSchema,
+    languages: event.template.languages,
+  });
+  if (errors.length) {
+    return res.status(400).json({
+      ok: false,
+      message: errors.length === 1
+        ? `${errors[0].replace(/\.$/, '')}. Nothing was changed.`
+        : `The file has ${errors.length} problems. Nothing was changed.`,
+      errors,
+      warnings,
+    });
+  }
+
+  const applied = await applyEventData({ eventId: event.id, ownerId: user.id, plan });
+  const fresh = await prisma.event.findUnique({ where: { id: event.id }, include: EVENT_INCLUDE });
+  res.json({ ok: true, applied, warnings, event: shapeEvent(fresh), urls: buildUrls(fresh) });
+}
+
 // POST /api/v1/testing/session
 // Mint a short-lived user JWT so the admin can open the user app already signed
 // in. Narrow by construction: 400s unless the target is the flagged test
@@ -410,6 +473,8 @@ module.exports = {
   loadTemplate,
   setPublished,
   repin,
+  eventDataSample,
+  uploadEventData,
   createSession,
   reset,
   listDevelopers,

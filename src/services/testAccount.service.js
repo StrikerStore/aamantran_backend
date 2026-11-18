@@ -12,6 +12,7 @@ const bcrypt = require('bcrypt');
 const crypto = require('crypto');
 const prisma = require('../utils/prisma');
 const objectStorage = require('./objectStorage');
+const storage = require('../config/storage');
 const { validateNewPassword } = require('../utils/authSecurity');
 
 // Username must be lowercase: login looks up `username.trim().toLowerCase()`
@@ -161,8 +162,9 @@ async function purgeTestEvents(userId) {
       ...pins.map((p) => p.imageUrl),
     );
   }
+  // The test user's own review photos: rows that belong to the user, not the event.
   const reviews = await prisma.templateReview.findMany({ where: { userId: ownerId }, select: { couplePhotoUrl: true } });
-  fileUrls.push(...reviews.map((r) => r.couplePhotoUrl));
+  const reviewUrls = reviews.map((r) => r.couplePhotoUrl).filter(Boolean);
 
   await prisma.$transaction([
     prisma.invitationEvent.deleteMany({ where: { eventId: { in: eventIds } } }),
@@ -181,11 +183,38 @@ async function purgeTestEvents(userId) {
     prisma.event.deleteMany({ where: { ownerId } }),
   ]);
 
-  for (const url of fileUrls) {
-    if (url) objectStorage.tryDeletePublicUrl(url).catch(() => {});
+  // Only files these events uploaded. A test event's rows can also point at a
+  // template's demo files or anything else in the bucket (the Testing page's
+  // JSON upload copies demo-media links in), and those must outlive the event.
+  const owned = [
+    ...fileUrls.filter((url) => isTestEventUpload(url, { eventIds, ownerId })),
+    ...reviewUrls,
+  ];
+  for (const url of owned) {
+    objectStorage.tryDeletePublicUrl(url).catch(() => {});
   }
 
-  return { events: eventIds.length, files: fileUrls.filter(Boolean).length };
+  return { events: eventIds.length, files: owned.length };
+}
+
+/**
+ * True when a URL is a file one of these events uploaded, so deleting it
+ * cannot take anything away from another event or a template. The prefixes
+ * are the ones minted for an event: media and person photos
+ * (eventMedia.service), the photo wall and the mood board
+ * (planning.controller), and the owner's WhatsApp share images.
+ *
+ * @param {string|null|undefined} url
+ * @param {{ eventIds: string[], ownerId: string }} owner
+ */
+function isTestEventUpload(url, { eventIds, ownerId }) {
+  const key = storage.publicUrlToObjectKey(url);
+  if (!key) return false; // external link, or local-disk mode
+  if (key.startsWith(`users/${ownerId}/`)) return true;
+  return eventIds.some((id) =>
+    key.startsWith(`uploads/events/${id}/`)
+    || key.startsWith(`photowall/${id}/`)
+    || key.startsWith(`moodboard/${id}/`));
 }
 
 module.exports = {
@@ -197,4 +226,5 @@ module.exports = {
   rotatePassword,
   generatePassword,
   purgeTestEvents,
+  isTestEventUpload,
 };

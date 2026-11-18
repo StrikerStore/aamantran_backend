@@ -11,6 +11,8 @@ router.post('/rotate-password',  controller.rotate);
 router.post('/load-template',    controller.loadTemplate);
 router.post('/publish',          controller.setPublished);
 router.post('/repin',            controller.repin);
+router.get ('/event-data/sample', controller.eventDataSample);
+router.post('/event-data',       controller.uploadEventData);
 router.post('/session',          controller.createSession);
 router.post('/reset',            controller.reset);
 
